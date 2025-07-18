@@ -1,0 +1,53 @@
+{
+  "name": "paradise-steam-library",
+  "version": "1.0.0",
+  "description": "Modern Steam Library Manager",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder",
+    "build-win": "electron-builder --win",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --publish=never"
+  },
+  "keywords": [
+    "steam",
+    "games",
+    "library",
+    "manager",
+    "paradise"
+  ],
+  "author": "Paradise Dev",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^27.0.0",
+    "electron-builder": "^24.6.4"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "discord-rpc": "^4.0.1",
+    "fs-extra": "^11.1.1",
+    "yauzl": "^2.10.0"
+  },
+  "build": {
+    "appId": "com.paradisedev.steamlibrary",
+    "productName": "Paradise Steam Library",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

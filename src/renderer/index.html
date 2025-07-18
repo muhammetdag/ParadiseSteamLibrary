@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Paradise Steam Library</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Custom Title Bar -->
+    <div class="title-bar">
+        <div class="title-bar-left">
+            <div class="app-logo">
+                <div class="logo-icon">⚡</div>
+                <span class="app-name">Paradise Steam Library</span>
+            </div>
+        </div>
+        
+        <div class="title-bar-right">
+            <button class="title-btn minimize-btn" id="minimizeBtn">
+                <svg width="12" height="12" viewBox="0 0 12 12">
+                    <path d="M2 6h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+            </button>
+            <button class="title-btn maximize-btn" id="maximizeBtn">
+                <svg width="12" height="12" viewBox="0 0 12 12">
+                    <rect x="2" y="2" width="8" height="8" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                </svg>
+            </button>
+            <button class="title-btn close-btn" id="closeBtn">
+                <svg width="12" height="12" viewBox="0 0 12 12">
+                    <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="main-container">
+        <!-- Sidebar Navigation -->
+        <!-- Main Content -->
+        <div class="content-wrapper">
+            <!-- Top Navigation -->
+            <div class="top-nav" id="topNav">
+                <div class="nav-left">
+                    <!-- Kategoriler kaldırıldı -->
+                </div>
+                <div class="nav-right">
+                    <div class="search-container">
+                        <div class="search-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                                <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/>
+                                <path d="m21 21-4.35-4.35" stroke="currentColor" stroke-width="2"/>
+                            </svg>
+                        </div>
+                        <input type="text" id="searchInput" placeholder="Oyun ara..." class="search-input" data-i18n-placeholder="search_placeholder">
+                        <div class="search-shortcut">Ctrl+K</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Page Content -->
+            <div class="page-content">
+                <!-- Home Page -->
+                <div class="page active" id="homePage">
+                    <!-- Hero Section -->
+                    <div class="hero-section" id="heroSection">
+                        <div class="hero-background" id="heroBackground"></div>
+                        <div class="hero-overlay"></div>
+                        <div class="hero-content">
+                            <div class="hero-badge" data-i18n="featured_game">Öne Çıkan Oyun</div>
+                            <h1 class="hero-title" id="heroTitle" data-i18n="loading">Yükleniyor...</h1>
+                            <p class="hero-description" id="heroDescription" data-i18n="discovering_games">Harika oyunlar keşfediliyor...</p>
+                            <div class="hero-actions">
+                                <button class="hero-btn primary" id="heroViewBtn" data-i18n="view_details">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M8 5v14l11-7z"/>
+                                    </svg>
+                                    <span data-i18n="view_details">Detayları Görüntüle</span>
+                                </button>
+                                <button class="hero-btn secondary" id="heroLibraryBtn" data-i18n="add_to_library">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                    </svg>
+                                    <span data-i18n="add_to_library">Kütüphaneme Ekle</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="hero-game-info">
+                            <div class="game-rating" id="heroRating">
+                                <div class="rating-stars"></div>
+                                
+                            </div>
+                            <div class="game-price" id="heroPrice" data-i18n="price">$0.00</div>
+                        </div>
+                    </div>
+
+                    <!-- Games Grid -->
+                    <div class="games-section">
+                        <div class="section-header">
+                            <h2 class="section-title" id="sectionTitle" data-i18n="featured_games">Öne Çıkan Oyunlar</h2>
+                            <!-- View-toggle butonları kaldırıldı -->
+                        </div>
+                        
+                        <div class="games-grid" id="gamesGrid">
+                            <!-- Games will be loaded here -->
+                        </div>
+
+                        <div class="load-more-container">
+                            <button class="load-more-btn" id="loadMoreBtn">
+                                <span data-i18n="load_more">Daha Fazla Oyun Yükle</span>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 5v14M5 12l7 7 7-7"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Library Page -->
+                <div class="page" id="libraryPage">
+                    <div class="page-header">
+                        <h1 data-i18n="library">Kütüphanem</h1>
+                        <div class="library-stats">
+                            <div class="stat-item">
+                                <span class="stat-number" id="libraryCount">0</span>
+                                <span class="stat-label" data-i18n="library_tab">Oyun</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="library-grid" id="libraryGrid">
+                        <!-- Library games will be loaded here -->
+                    </div>
+                </div>
+
+                <!-- Settings Page -->
+                <div class="page" id="settingsPage">
+                    <div class="page-header">
+                        <h1 data-i18n="settings">Ayarlar</h1>
+                    </div>
+                    <div class="settings-content">
+                        <div class="settings-section">
+                            <h3 data-i18n="steam_config">Steam Yapılandırması</h3>
+                            <div class="setting-item">
+                                <label data-i18n="steam_path">Steam Kurulum Yolu:</label>
+                                <div class="path-input-group">
+                                    <input type="text" id="steamPathInput" readonly data-i18n-placeholder="steam_path_placeholder">
+                                    <button class="browse-btn" id="browseSteamBtn" data-i18n="browse">Gözat</button>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Dinamik dil seçici burada -->
+                        <div id="settings-page"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Hamburger Menü ve Baloncuklar (sol alt köşe) -->
+    <div class="floating-hamburger">
+        <button class="hamburger-btn" id="hamburgerMenuBtn">
+            <span class="hamburger-line"></span>
+            <span class="hamburger-line"></span>
+            <span class="hamburger-line"></span>
+        </button>
+        <div class="bubble-menu" id="bubbleMenu">
+            <button class="bubble-item" id="bubbleHome" title="Ana Sayfa">
+                <span style="font-size:20px;">🏠</span>
+            </button>
+            <button class="bubble-item" id="bubbleLibrary" title="Kütüphanem">
+                <span style="font-size:20px;">📚</span>
+            </button>
+            <button class="bubble-item" id="bubbleSettings" title="Ayarlar">
+                <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15.4a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 5 8.6a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8.6 5a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 16 5a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19 8.6a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19 15.4z"/></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Game Detail Modal -->
+    <div class="modal-overlay" id="gameModal">
+        <div class="modal-container">
+            <div class="modal-header">
+                <div class="modal-title-section">
+                    <h2 id="modalTitle" data-i18n="game_title">Oyun Adı</h2>
+                    <div class="modal-subtitle">
+                        <span id="modalDeveloper" data-i18n="developer">Geliştirici</span>
+                        <span class="separator">•</span>
+                        <span id="modalReleaseDate" data-i18n="release_year">2023</span>
+                    </div>
+                </div>
+                <button class="modal-close" id="modalClose">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            
+            <div class="modal-content">
+                <div class="modal-media">
+                    <div class="main-image-container">
+                        <div id="modalPreviewThumbnails" style="display:flex;gap:8px;margin-bottom:8px;"></div>
+                        <div id="modalVideoContainer" style="position:relative;"></div>
+                        <img id="modalMainImage" src="" alt="Oyun Ekran Görüntüsü" style="width:100%;max-height:340px;object-fit:cover;display:none;">
+                    </div>
+                    <div id="modalLangList" style="display:flex;gap:8px;margin:12px 0 8px 0;"></div>
+                </div>
+                
+                <div class="modal-info">
+                    <div class="game-stats">
+                        <div class="stat-item">
+                            <div class="stat-label" data-i18n="rating">Değerlendirme</div>
+                            <div class="stat-value" id="modalRating">
+                                <div class="rating-stars"></div>
+                                <span class="rating-number">4.5</span>
+                            </div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label" data-i18n="price">Fiyat</div>
+                            <div class="stat-value price" id="modalPrice">$29.99</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label" data-i18n="reviews">İncelemeler</div>
+                            <div class="stat-value" id="modalReviews">Çok Olumlu</div>
+                        </div>
+                    </div>
+                    
+                    <div class="game-description">
+                        <h3 data-i18n="about_game">Bu Oyun Hakkında</h3>
+                        <p id="modalDescription" data-i18n="game_description">Oyun açıklaması burada yüklenecek...</p>
+                    </div>
+                    
+                    <div class="game-details">
+                        <div class="detail-row">
+                            <span class="detail-label" data-i18n="developer">Geliştirici:</span>
+                            <span class="detail-value" id="modalDevDetail">Yükleniyor...</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label" data-i18n="publisher">Yayıncı:</span>
+                            <span class="detail-value" id="modalPublisher">Yükleniyor...</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label" data-i18n="release_date">Çıkış Tarihi:</span>
+                            <span class="detail-value" id="modalRelease">Yükleniyor...</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label" data-i18n="genres">Türler:</span>
+                            <div class="genre-tags" id="modalGenres">
+                                <!-- Genre tags will be loaded here -->
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="modal-actions">
+                        <button class="action-btn primary" id="modalAddBtn" data-i18n="add_to_library">Kütüphaneme Ekle</button>
+                        <button class="action-btn secondary" id="modalSteamBtn" data-i18n="open_in_steam">Steam'de Aç</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- DLC Selection Modal -->
+    <div class="modal-overlay" id="dlcModal">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2 data-i18n="select_dlcs">DLC'leri Seç</h2>
+                <button class="modal-close" id="dlcModalClose">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-content">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                    <input type="checkbox" id="selectAllDLC" style="transform:scale(1.2);">
+                    <label for="selectAllDLC" data-i18n="select_all_dlcs">Tümünü Seç</label>
+                </div>
+                <div class="dlc-list" id="dlcList"></div>
+                <div class="modal-actions">
+                    <button class="action-btn primary" id="confirmDLCBtn" data-i18n="add_selected">Seçilenleri Ekle</button>
+                    <button class="action-btn secondary" id="cancelDLCBtn" data-i18n="cancel">İptal</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Steam Restart Modal -->
+    <div class="modal-overlay" id="steamRestartModal">
+        <div class="modal-container small">
+            <div class="modal-header">
+                <h2 data-i18n="restart_steam_title">Steam'i Yeniden Başlat</h2>
+            </div>
+            <div class="modal-content">
+                <p data-i18n="restart_steam_info">Oyun kütüphanenize eklendi! Değişiklikleri görmek için Steam'in yeniden başlatılması gerekiyor.</p>
+                <p data-i18n="restart_steam_question">Steam'i şimdi yeniden başlatmak istiyor musunuz?</p>
+                <div class="countdown" id="countdown">5</div>
+                <div class="modal-actions">
+                    <button class="action-btn primary" id="restartSteamBtn" data-i18n="restart_steam_yes">Evet, Yeniden Başlat</button>
+                    <button class="action-btn secondary" id="cancelRestartBtn" data-i18n="restart_steam_no">Hayır, Daha Sonra</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Steam Setup Modal -->
+    <div class="modal-overlay" id="steamSetupModal">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2>Steam Kurulumu Gerekli</h2>
+            </div>
+            <div class="modal-content">
+                <p>Devam etmek için lütfen Steam kurulum klasörünüzü seçin.</p>
+                <div class="path-input-group">
+                    <input type="text" id="setupSteamPath" placeholder="Steam kurulum yolu..." readonly>
+                    <button class="browse-btn" id="setupBrowseBtn">Gözat</button>
+                </div>
+                <div class="modal-actions">
+                    <button class="action-btn primary" id="confirmSetupBtn">Devam Et</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-content">
+            <div class="loading-spinner">
+                <div class="spinner-ring"></div>
+                <div class="spinner-ring"></div>
+                <div class="spinner-ring"></div>
+            </div>
+            <div class="loading-text">Harika oyunlar yükleniyor...</div>
+        </div>
+    </div>
+
+    <!-- Notification Container -->
+    <div class="notification-container" id="notificationContainer">
+        <!-- Notifications will appear here -->
+    </div>
+
+    <!-- Ayarlar Sayfası (Dil seçici için) -->
+    <div id="settings-page"></div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>
