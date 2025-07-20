@@ -5,6 +5,8 @@ const os = require('os');
 const axios = require('axios');
 const yauzl = require('yauzl');
 const { spawn, exec } = require('child_process');
+const tmp = require('os').tmpdir();
+const { v4: uuidv4 } = require('uuid'); // Eğer uuid yoksa npm install uuid
 
 class SteamLibraryManager {
   constructor() {
@@ -15,11 +17,15 @@ class SteamLibraryManager {
     this.config = {};
     this.gamesCache = {};
     this.discordRPC = null;
-    
-    this.ensureAppDataDir();
-    this.loadConfig();
-    this.loadGamesCache();
-    this.initDiscordRPC();
+
+    this.init(); // Asenkron başlatıcı
+  }
+
+  async init() {
+    await this.ensureAppDataDir();
+    await this.loadConfig();
+    await this.loadGamesCache();
+    await this.initDiscordRPC();
   }
 
   async ensureAppDataDir() {
@@ -81,7 +87,7 @@ class SteamLibraryManager {
     
     try {
       const DiscordRPC = require('discord-rpc');
-      const clientId = '1234567890123456789'; // Replace with your Discord app ID
+      const clientId = '1396248989413806140'; 
       
       this.discordRPC = new DiscordRPC.Client({ transport: 'ipc' });
       
@@ -107,6 +113,12 @@ class SteamLibraryManager {
         largeImageText: 'Paradise Steam Library',
         smallImageKey: 'steam-logo',
         smallImageText: 'Steam',
+        buttons: [
+          {
+            label: 'Discord',
+            url: 'https://discord.gg/YNXenatwUT'
+          }
+        ],
         instance: false,
       });
     } catch (error) {
@@ -128,7 +140,8 @@ class SteamLibraryManager {
         webSecurity: false
       },
       show: false,
-      backgroundColor: '#0a0a0a'
+      backgroundColor: '#0a0a0a',
+      icon: path.join(__dirname, 'pdlogo.ico') 
     });
 
     this.mainWindow.loadFile('src/renderer/index.html');
@@ -232,6 +245,76 @@ class SteamLibraryManager {
     // External links
     ipcMain.handle('open-external', async (event, url) => {
       shell.openExternal(url);
+    });
+
+    // Online oyun dosyası indirme
+    ipcMain.handle('download-online-file', async (event, steamid) => {
+      const tempZipPath = path.join(tmp, `${steamid}_${uuidv4()}.zip`);
+      try {
+        // Klasör seçtir
+        const { canceled, filePaths } = await dialog.showOpenDialog({
+          title: 'Klasör Seçin',
+          properties: ['openDirectory', 'createDirectory']
+        });
+        if (canceled || !filePaths || !filePaths[0]) return;
+
+        const targetDir = filePaths[0];
+
+        // Zip dosyasını temp'e indir
+        const url = `https://muhammetdag.com/api/v1/online.php?steamid=${steamid}`;
+        const response = await axios({
+          url,
+          method: 'GET',
+          responseType: 'stream',
+          timeout: 60000
+        });
+        await new Promise((resolve, reject) => {
+          const writer = fs.createWriteStream(tempZipPath);
+          response.data.pipe(writer);
+          writer.on('finish', resolve);
+          writer.on('error', reject);
+        });
+
+        // Zip'i ayıkla
+        await new Promise((resolve, reject) => {
+          yauzl.open(tempZipPath, { lazyEntries: true }, (err, zipfile) => {
+            if (err) return reject(err);
+            zipfile.readEntry();
+            zipfile.on('entry', entry => {
+              const entryPath = path.join(targetDir, entry.fileName);
+              if (/\/$/.test(entry.fileName)) {
+                // Klasör ise oluştur
+                fs.ensureDir(entryPath, err => {
+                  if (err) return reject(err);
+                  zipfile.readEntry();
+                });
+              } else {
+                // Dosya ise çıkar
+                zipfile.openReadStream(entry, (err, readStream) => {
+                  if (err) return reject(err);
+                  fs.ensureDir(path.dirname(entryPath), err => {
+                    if (err) return reject(err);
+                    const writeStream = fs.createWriteStream(entryPath);
+                    readStream.pipe(writeStream);
+                    writeStream.on('finish', () => {
+                      zipfile.readEntry();
+                    });
+                  });
+                });
+              }
+            });
+            zipfile.on('end', resolve);
+            zipfile.on('error', reject);
+          });
+        });
+
+        // Temp zip dosyasını sil
+        await fs.remove(tempZipPath);
+        return true;
+      } catch (err) {
+        try { await fs.remove(tempZipPath); } catch {}
+        throw err;
+      }
     });
   }
 

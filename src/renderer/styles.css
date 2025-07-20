@@ -8,8 +8,11 @@ body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
     color: #ffffff;
-    overflow: hidden;
+    /* overflow: hidden; */
     user-select: none;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
 }
 
 /* Title Bar */
@@ -86,7 +89,21 @@ body {
 /* Main Container */
 .main-container {
     display: flex;
-    height: calc(100vh - 32px);
+    flex: 1 0 auto;
+    height: auto;
+}
+
+footer {
+    width: 100%;
+    background: #10141a;
+    color: #aaa;
+    text-align: center;
+    padding: 18px 0 12px 0;
+    font-size: 15px;
+    letter-spacing: 0.2px;
+    box-shadow: 0 -2px 16px #0003;
+    margin-top: 32px;
+    flex-shrink: 0;
 }
 
 .floating-hamburger {
