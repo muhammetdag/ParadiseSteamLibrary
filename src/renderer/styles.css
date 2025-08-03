@@ -108,28 +108,33 @@ footer {
 
 .floating-hamburger {
     position: fixed;
-    left: 32px;
-    bottom: 32px;
-    z-index: 1001;
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    z-index: 1000;
     pointer-events: none;
+    height: 100%;
 }
+
 .floating-hamburger .hamburger-btn,
 .floating-hamburger .bubble-menu {
     pointer-events: auto;
 }
+
 .floating-hamburger .bubble-menu {
-    position: absolute;
-    left: 0;
-    bottom: 60px;
-    align-items: flex-start;
+    position: static;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    margin-left: 12px;
+    margin-bottom: 12px;
 }
+
 @media (max-width: 768px) {
     .floating-hamburger {
-        left: 12px;
-        bottom: 12px;
+        justify-content: flex-end;
+        padding-right: 8px;
     }
 }
 
@@ -162,75 +167,135 @@ footer {
 }
 
 .hamburger-btn {
-    width: 48px;
-    height: 48px;
-    background: rgba(0, 212, 255, 0.08);
-    border: none;
-    border-radius: 50%;
+    top: 5px;
+    width: 52px;
+    height: 52px;
+    background: linear-gradient(135deg, rgba(0, 212, 255, 0.12) 0%, rgba(0, 120, 255, 0.08) 100%);
+    border: 2px solid rgba(0, 212, 255, 0.15);
+    border-radius: 16px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.10);
-    transition: background 0.2s;
-    margin-bottom: 8px;
+    box-shadow: 0 4px 16px rgba(0, 212, 255, 0.12), 0 2px 8px rgba(0,0,0,0.15);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    margin-bottom: 12px;
     position: relative;
     z-index: 20;
+    backdrop-filter: blur(8px);
 }
+
 .hamburger-btn:hover {
-    background: rgba(0, 212, 255, 0.18);
+    background: linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 120, 255, 0.18) 100%);
+    border-color: rgba(0, 212, 255, 0.35);
+    box-shadow: 0 8px 24px rgba(0, 212, 255, 0.25), 0 4px 12px rgba(0,0,0,0.2);
+    transform: translateY(-2px) scale(1.05);
 }
+
+.hamburger-btn:active {
+    transform: translateY(0) scale(0.98);
+    box-shadow: 0 2px 8px rgba(0, 212, 255, 0.15), 0 1px 4px rgba(0,0,0,0.1);
+}
+
 .hamburger-line {
-    width: 24px;
-    height: 3px;
-    background: #00d4ff;
-    border-radius: 2px;
-    margin: 2.5px 0;
-    transition: all 0.3s;
+    width: 22px;
+    height: 2.5px;
+    background: linear-gradient(90deg, #00d4ff 0%, #0099cc 100%);
+    border-radius: 3px;
+    margin: 3px 0;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 1px 3px rgba(0, 212, 255, 0.3);
+}
+
+.hamburger-btn:hover .hamburger-line {
+    background: linear-gradient(90deg, #ffffff 0%, #00d4ff 100%);
+    box-shadow: 0 2px 6px rgba(0, 212, 255, 0.4);
+}
+
+/* Hamburger menü animasyonu */
+.hamburger-btn.active .hamburger-line:nth-child(1) {
+    transform: rotate(45deg) translate(6px, 6px);
+}
+
+.hamburger-btn.active .hamburger-line:nth-child(2) {
+    opacity: 0;
+    transform: scale(0);
+}
+
+.hamburger-btn.active .hamburger-line:nth-child(3) {
+    transform: rotate(-45deg) translate(6px, -6px);
 }
 
 .bubble-menu {
     position: absolute;
-    bottom: 60px;
+    bottom: 70px;
     right: 0;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    gap: 18px;
+    gap: 16px;
     opacity: 0;
     pointer-events: none;
     transform: translateY(20px) scale(0.95);
-    transition: opacity 0.25s, transform 0.25s;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     z-index: 19;
 }
+
 .bubble-menu.active {
     opacity: 1;
     pointer-events: auto;
     transform: translateY(0) scale(1);
 }
+
 .bubble-item {
-    width: 48px;
-    height: 48px;
-    background: linear-gradient(135deg, #1a1a1a 60%, #00d4ff 100%);
-    border: none;
-    border-radius: 50%;
+    top: 5px;
+    width: 50px;
+    height: 50px;
+    background: linear-gradient(135deg, rgba(26, 26, 26, 0.95) 0%, rgba(0, 212, 255, 0.15) 100%);
+    border: 2px solid rgba(0, 212, 255, 0.2);
+    border-radius: 14px;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #fff;
-    box-shadow: 0 4px 16px 0 rgba(0,212,255,0.18);
-    font-size: 20px;
-    cursor: pointer;
-    transition: background 0.2s, transform 0.2s;
-    outline: none;
-    border: 2px solid #00d4ff22;
-}
-.bubble-item:hover {
-    background: linear-gradient(135deg, #00d4ff 60%, #1a1a1a 100%);
     color: #00d4ff;
-    transform: scale(1.08);
-    border: 2px solid #00d4ff;
+    box-shadow: 0 6px 20px rgba(0, 212, 255, 0.15), 0 2px 8px rgba(0,0,0,0.2);
+    font-size: 18px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    outline: none;
+    backdrop-filter: blur(8px);
+    position: relative;
+    overflow: hidden;
+}
+
+.bubble-item::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, transparent 100%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.bubble-item:hover {
+    background: linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 120, 255, 0.15) 100%);
+    color: #ffffff;
+    transform: translateY(-3px) scale(1.1);
+    border-color: rgba(0, 212, 255, 0.5);
+    box-shadow: 0 12px 32px rgba(0, 212, 255, 0.25), 0 4px 16px rgba(0,0,0,0.3);
+}
+
+.bubble-item:hover::before {
+    opacity: 1;
+}
+
+.bubble-item:active {
+    transform: translateY(-1px) scale(1.05);
+    box-shadow: 0 8px 24px rgba(0, 212, 255, 0.2), 0 2px 8px rgba(0,0,0,0.2);
 }
 
 .nav-item {
@@ -330,23 +395,29 @@ footer {
 .nav-right {
     display: flex;
     align-items: center;
+    flex: 1;
+    justify-content: center;
 }
 
 .search-container {
     position: relative;
     display: flex;
     align-items: center;
+    justify-content: center;
+    width: 350px;
+    max-width: 100%;
 }
 
 .search-input {
     width: 300px;
-    padding: 10px 16px 10px 40px;
+    padding: 10px 0px 10px 0px;
     background: rgba(255, 255, 255, 0.05);
     border: 2px solid rgba(255, 255, 255, 0.1);
     border-radius: 12px;
     color: white;
     font-size: 14px;
     transition: all 0.3s ease;
+    text-align: center;
 }
 
 .search-input:focus {
@@ -355,19 +426,26 @@ footer {
     box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.2);
 }
 
+.search-input::placeholder {
+    color: #666;
+    opacity: 1;
+}
+
 .search-icon {
     position: absolute;
-    left: 12px;
+    left: 35px;
     color: #666;
     pointer-events: none;
 }
 
 .search-shortcut {
     position: absolute;
-    right: 12px;
+    right: 40px;
     font-size: 12px;
     color: #666;
     font-family: 'JetBrains Mono', monospace;
+    pointer-events: none;
+    user-select: none;
 }
 
 /* Page Content */
@@ -730,7 +808,7 @@ footer {
 
 /* Library Page */
 .library-stats {
-    display: flex;
+    display: relative;
     gap: 20px;
 }
 
@@ -1282,56 +1360,97 @@ input[type="checkbox"] {
     margin-top: 8px;
 }
 
-/* Notifications */
+/* Bildirimler - Daha şık ve modern tasarım */
 .notification-container {
     position: fixed;
-    top: 32px;
+    top: 50px;
     right: 32px;
     z-index: 99999;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 18px;
     pointer-events: none;
 }
+
 .notification {
-    min-width: 260px;
-    max-width: 340px;
-    background: rgba(28, 32, 40, 0.98);
+    min-width: 270px;
+    max-width: 370px;
+    background: linear-gradient(135deg, rgba(28,32,40,0.98) 80%, rgba(0,212,255,0.10) 100%);
     color: #fff;
-    border-radius: 12px;
-    box-shadow: 0 4px 24px 0 rgba(0,0,0,0.18);
-    padding: 18px 24px 16px 20px;
-    font-size: 1rem;
+    border-radius: 18px;
+    box-shadow: 0 8px 32px 0 rgba(0,0,0,0.22), 0 1.5px 8px 0 rgba(0,212,255,0.08);
+    padding: 22px 32px 20px 28px;
+    font-size: 1.04rem;
     font-weight: 500;
     pointer-events: auto;
-    opacity: 0.98;
-    transition: transform 0.2s, opacity 0.2s;
+    opacity: 0.99;
+    transition: transform 0.22s cubic-bezier(.4,1.3,.6,1), opacity 0.18s;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
+    border: 1.5px solid rgba(0,212,255,0.10);
+    backdrop-filter: blur(8px);
+    animation: notificationFadeIn 0.35s cubic-bezier(.4,1.3,.6,1);
 }
+
+@keyframes notificationFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-18px) scale(0.98);
+    }
+    to {
+        opacity: 0.99;
+        transform: translateY(0) scale(1);
+    }
+}
+
 .notification-title {
-    font-size: 1.08rem;
-    font-weight: bold;
+    font-size: 1.13rem;
+    font-weight: 700;
     margin-bottom: 2px;
     color: #00d4ff;
+    letter-spacing: 0.01em;
+    text-shadow: 0 1px 8px rgba(0,212,255,0.10);
 }
+
 .notification-message {
-    font-size: 0.98rem;
-    color: #fff;
+    font-size: 1.01rem;
+    color: #e6e6e6;
+    font-weight: 400;
+    line-height: 1.5;
+    letter-spacing: 0.01em;
+    text-shadow: 0 1px 8px rgba(0,0,0,0.10);
 }
+
+.notification::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    border-radius: 18px;
+    pointer-events: none;
+    box-shadow: 0 2px 16px 0 rgba(0,212,255,0.08);
+    z-index: 0;
+}
+
+.notification-title,
+.notification-message {
+    position: relative;
+    z-index: 1;
+}
+
 @media (max-width: 600px) {
     .notification-container {
-        top: 12px;
-        right: 8px;
-        left: 8px;
+        top: 10px;
+        right: 4px;
+        left: 4px;
         gap: 10px;
     }
     .notification {
         min-width: 0;
         max-width: 100vw;
-        padding: 12px 10px 10px 10px;
-        font-size: 0.98rem;
+        padding: 14px 10px 12px 12px;
+        font-size: 0.99rem;
+        border-radius: 14px;
     }
 }
 
@@ -1638,4 +1757,299 @@ input[type="checkbox"] {
 }
 .dlc-release {
     color: #888;
+    font-size: 12px;
+}
+
+/* Refresh Button Styles */
+.refresh-btn {
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 8px;
+    padding: 8px;
+    cursor: pointer;
+    color: #ccc;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 12px;
+}
+
+.refresh-btn:hover {
+    background: #3a3a3a;
+    border-color: #555;
+    color: #fff;
+    transform: scale(1.05);
+}
+
+.refresh-btn:active {
+    transform: scale(0.95);
+}
+
+.refresh-btn svg {
+    transition: transform 0.3s ease;
+}
+
+.refresh-btn:hover svg {
+    transform: rotate(180deg);
+}
+
+.refresh-btn.loading svg {
+    animation: spin 1s linear infinite;
+}
+
+/* Page header layout adjustment for refresh button */
+.page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    padding: 0 24px;
+}
+
+.page-header h1 {
+    margin: 0;
+    font-size: 2.5rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.library-stats {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+}
+
+/* Responsive design for refresh button */
+@media (max-width: 768px) {
+    .header-right {
+        gap: 8px;
+    }
+    
+    .refresh-btn {
+        padding: 6px;
+    }
+    
+    .refresh-btn svg {
+        width: 18px;
+        height: 18px;
+    }
+    
+    .library-stats {
+        gap: 16px;
+    }
+}
+
+/* Manuel Kurulum Sayfası Stilleri */
+.manual-install-content {
+    padding: 32px 24px;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.upload-section {
+    margin-bottom: 32px;
+}
+
+.upload-area {
+    border: 3px dashed #444;
+    border-radius: 16px;
+    padding: 48px 24px;
+    text-align: center;
+    background: #1a1a1a;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.upload-area:hover {
+    border-color: #00d4ff;
+    background: #1f1f1f;
+}
+
+.upload-area.dragover {
+    border-color: #00d4ff;
+    background: #1f1f1f;
+    transform: scale(1.02);
+}
+
+.upload-icon {
+    margin-bottom: 16px;
+    color: #666;
+}
+
+.upload-area:hover .upload-icon {
+    color: #00d4ff;
+}
+
+.upload-area h3 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #fff;
+}
+
+.upload-area p {
+    color: #888;
+    margin-bottom: 24px;
+    font-size: 1rem;
+}
+
+.upload-btn {
+    background: #00d4ff;
+    color: #000;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.upload-btn:hover {
+    background: #00b8e6;
+    transform: translateY(-2px);
+}
+
+.game-info-section {
+    background: #1a1a1a;
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 24px;
+    border: 1px solid #333;
+}
+
+.game-info-section h3 {
+    font-size: 1.3rem;
+    font-weight: 600;
+    margin-bottom: 20px;
+    color: #fff;
+}
+
+.game-info-form {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.form-group label {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: #ccc;
+}
+
+.form-group input {
+    padding: 12px 16px;
+    border: 1px solid #444;
+    border-radius: 8px;
+    background: #2a2a2a;
+    color: #fff;
+    font-size: 1rem;
+    transition: all 0.2s ease;
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: #00d4ff;
+    box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.2);
+}
+
+.form-group input::placeholder {
+    color: #666;
+}
+
+.game-name-display,
+.game-id-display {
+    padding: 12px 16px;
+    border: 1px solid #444;
+    border-radius: 8px;
+    background: #2a2a2a;
+    color: #fff;
+    font-size: 1rem;
+    min-height: 20px;
+    display: flex;
+    align-items: center;
+}
+
+.game-name-display {
+    color: #00d4ff;
+    font-weight: 600;
+}
+
+.game-id-display {
+    color: #ccc;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.install-actions {
+    text-align: center;
+    padding: 24px 0;
+}
+
+.install-actions .action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 16px 32px;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.file-info {
+    background: #1a1a1a;
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 16px;
+    border: 1px solid #333;
+}
+
+.file-info h4 {
+    color: #00d4ff;
+    margin-bottom: 8px;
+    font-size: 1rem;
+}
+
+.file-info p {
+    color: #ccc;
+    font-size: 0.9rem;
+    margin: 4px 0;
+}
+
+/* Responsive tasarım */
+@media (max-width: 768px) {
+    .manual-install-content {
+        padding: 24px 16px;
+    }
+    
+    .upload-area {
+        padding: 32px 16px;
+    }
+    
+    .upload-area h3 {
+        font-size: 1.3rem;
+    }
+    
+    .game-info-form {
+        gap: 16px;
+    }
+    
+    .install-actions .action-btn {
+        width: 100%;
+        justify-content: center;
+    }
 }

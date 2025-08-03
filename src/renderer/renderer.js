@@ -11,6 +11,13 @@ class SteamLibraryUI {
         this.restartCountdown = null;
         this.searchTimeout = null;
         this.countryCode = null;
+        
+        // Online Pass sayfalama değişkenleri
+        this.onlinePassGames = [];
+        this.onlinePassCurrentPage = 0;
+        this.onlinePassGamesPerPage = 15;
+        this.onlinePassFilteredGames = [];
+        
         this.init();
     }
 
@@ -56,6 +63,11 @@ class SteamLibraryUI {
             const key = el.getAttribute('data-i18n-placeholder');
             el.setAttribute('placeholder', this.translate(key));
         });
+        // Tüm data-i18n-title alanlarını güncelle
+        document.querySelectorAll('[data-i18n-title]').forEach(el => {
+            const key = el.getAttribute('data-i18n-title');
+            el.setAttribute('title', this.translate(key));
+        });
     }
 
     setupEventListeners() {
@@ -94,10 +106,13 @@ class SteamLibraryUI {
                 const query = e.target.value.trim().toLowerCase();
                 if (!this.onlinePassGames) return;
                 if (!query) {
+                    this.onlinePassFilteredGames = this.onlinePassGames;
+                    this.onlinePassCurrentPage = 0;
                     this.renderOnlinePassGames();
                 } else {
-                    const filtered = this.onlinePassGames.filter(game => game.name.toLowerCase().includes(query));
-                    this.renderOnlinePassGames(filtered);
+                    this.onlinePassFilteredGames = this.onlinePassGames.filter(game => game.name.toLowerCase().includes(query));
+                    this.onlinePassCurrentPage = 0;
+                    this.renderOnlinePassGames();
                 }
             } else {
                 this.handleSearch(e.target.value, false);
@@ -110,10 +125,13 @@ class SteamLibraryUI {
                     const query = searchInput.value.trim().toLowerCase();
                     if (!this.onlinePassGames) return;
                     if (!query) {
+                        this.onlinePassFilteredGames = this.onlinePassGames;
+                        this.onlinePassCurrentPage = 0;
                         this.renderOnlinePassGames();
                     } else {
-                        const filtered = this.onlinePassGames.filter(game => game.name.toLowerCase().includes(query));
-                        this.renderOnlinePassGames(filtered);
+                        this.onlinePassFilteredGames = this.onlinePassGames.filter(game => game.name.toLowerCase().includes(query));
+                        this.onlinePassCurrentPage = 0;
+                        this.renderOnlinePassGames();
                     }
                 } else {
                     this.handleSearch(e.target.value, true);
@@ -157,6 +175,12 @@ class SteamLibraryUI {
             this.closeModal('steamRestartModal');
         });
 
+        // Library refresh
+        const refreshLibraryBtn = document.getElementById('refreshLibraryBtn');
+        if (refreshLibraryBtn) refreshLibraryBtn.addEventListener('click', () => {
+            this.refreshLibrary();
+        });
+
         // Load more games
         const loadMoreBtn = document.getElementById('loadMoreBtn');
         if (loadMoreBtn) loadMoreBtn.addEventListener('click', () => {
@@ -172,6 +196,8 @@ class SteamLibraryUI {
         if (videoMutedToggle) videoMutedToggle.addEventListener('change', (e) => {
             this.updateConfig({ videoMuted: e.target.checked });
         });
+
+
 
         // Close modals on overlay click
         document.querySelectorAll('.modal-overlay').forEach(overlay => {
@@ -202,11 +228,11 @@ class SteamLibraryUI {
             bubbleMenu.classList.remove('active');
         });
         document.getElementById('bubbleOnlinePass').addEventListener('click', () => {
-            if (document.getElementById('onlinePassPage')) {
-                this.switchPage('onlinePass');
-            } else {
-                alert('Online Pass sekmesi yakında!');
-            }
+            this.switchPage('onlinePass');
+            bubbleMenu.classList.remove('active');
+        });
+        document.getElementById('bubbleManualInstall').addEventListener('click', () => {
+            this.switchPage('manualInstall');
             bubbleMenu.classList.remove('active');
         });
 
@@ -308,6 +334,8 @@ class SteamLibraryUI {
             pageEl.style.display = '';
             if (page === 'onlinePass') {
                 this.loadOnlinePassGames();
+            } else if (page === 'manualInstall') {
+                this.setupManualInstallListeners();
             }
         }
     }
@@ -368,7 +396,7 @@ class SteamLibraryUI {
                 };
             }));
             this.gamesData = games.filter(Boolean);
-            this.renderGames();
+            await this.renderGames();
             this.updateHeroSection();
         } catch (error) {
             console.error('Failed to load games:', error);
@@ -378,7 +406,7 @@ class SteamLibraryUI {
         }
     }
 
-    renderGames() {
+    async renderGames() {
         const gamesGrid = document.getElementById('gamesGrid');
         gamesGrid.innerHTML = '';
 
@@ -387,24 +415,25 @@ class SteamLibraryUI {
             return;
         }
 
-        this.gamesData.forEach(game => {
-            const gameCard = this.createGameCard(game);
-            gamesGrid.appendChild(gameCard);
+        // Oyun kartlarını paralel olarak oluştur
+        const cardPromises = this.gamesData.map(game => this.createGameCard(game));
+        const cards = await Promise.all(cardPromises);
+        
+        cards.forEach(card => {
+            gamesGrid.appendChild(card);
         });
     }
 
     // Oyun kartı oluşturulurken butonlara data-i18n ekle
-    createGameCard(game, isLibrary = false) {
+    async createGameCard(game, isLibrary = false) {
         const card = document.createElement('div');
         card.className = 'game-card';
         card.addEventListener('click', () => this.showGameDetails(game));
 
+        // Akıllı görsel çekme sistemi
         let imageUrl = game.header_image;
         if (!imageUrl && game.appid) {
-            imageUrl = `https://cdn.akamai.steamstatic.com/steam/apps/${game.appid}/capsule_616x353.jpg`;
-        }
-        if (!imageUrl && game.appid) {
-            imageUrl = `https://cdn.akamai.steamstatic.com/steam/apps/${game.appid}/header.jpg`;
+            imageUrl = await this.getGameImageUrl(game.appid, game.name);
         }
 
         const tagsHtml = game.tags ? game.tags.map(tag => 
@@ -1028,6 +1057,27 @@ class SteamLibraryUI {
         }
     }
 
+    async refreshLibrary() {
+        const refreshBtn = document.getElementById('refreshLibraryBtn');
+        if (refreshBtn) {
+            refreshBtn.classList.add('loading');
+        }
+        
+        try {
+            this.showNotification('info', 'refreshing_library', 'info');
+            this.libraryGames = await ipcRenderer.invoke('get-library-games');
+            this.renderLibrary();
+            this.showNotification('success', 'library_refreshed', 'success');
+        } catch (error) {
+            console.error('Failed to refresh library:', error);
+            this.showNotification('error', 'library_refresh_failed', 'error');
+        } finally {
+            if (refreshBtn) {
+                refreshBtn.classList.remove('loading');
+            }
+        }
+    }
+
     renderLibrary() {
         const libraryGrid = document.getElementById('libraryGrid');
         const libraryCount = document.getElementById('libraryCount');
@@ -1574,6 +1624,343 @@ class SteamLibraryUI {
                 pt: 'Silenciar vídeos nos detalhes do jogo por padrão',
                 ko: '게임 상세 정보의 비디오를 기본적으로 음소거',
                 pl: 'Domyślnie wyciszaj filmy w szczegółach gry'
+            },
+            'refresh_library': {
+                tr: 'Kütüphaneyi Yenile',
+                en: 'Refresh Library',
+                de: 'Bibliothek aktualisieren',
+                fr: 'Actualiser la bibliothèque',
+                es: 'Actualizar biblioteca',
+                ru: 'Обновить библиотеку',
+                zh: '刷新库',
+                ja: 'ライブラリを更新',
+                it: 'Aggiorna libreria',
+                pt: 'Atualizar biblioteca',
+                ko: '라이브러리 새로고침',
+                pl: 'Odśwież bibliotekę'
+            },
+            'refreshing_library': {
+                tr: 'Kütüphane yenileniyor...',
+                en: 'Refreshing library...',
+                de: 'Bibliothek wird aktualisiert...',
+                fr: 'Actualisation de la bibliothèque...',
+                es: 'Actualizando biblioteca...',
+                ru: 'Обновление библиотеки...',
+                zh: '正在刷新库...',
+                ja: 'ライブラリを更新中...',
+                it: 'Aggiornamento libreria...',
+                pt: 'Atualizando biblioteca...',
+                ko: '라이브러리 새로고침 중...',
+                pl: 'Odświeżanie biblioteki...'
+            },
+            'library_refreshed': {
+                tr: 'Kütüphane başarıyla yenilendi',
+                en: 'Library refreshed successfully',
+                de: 'Bibliothek erfolgreich aktualisiert',
+                fr: 'Bibliothèque actualisée avec succès',
+                es: 'Biblioteca actualizada correctamente',
+                ru: 'Библиотека успешно обновлена',
+                zh: '库刷新成功',
+                ja: 'ライブラリが正常に更新されました',
+                it: 'Libreria aggiornata con successo',
+                pt: 'Biblioteca atualizada com sucesso',
+                ko: '라이브러리가 성공적으로 새로고침되었습니다',
+                pl: 'Biblioteka została pomyślnie odświeżona'
+            },
+            'library_refresh_failed': {
+                tr: 'Kütüphane yenilenemedi',
+                en: 'Failed to refresh library',
+                de: 'Bibliothek konnte nicht aktualisiert werden',
+                fr: 'Échec de l\'actualisation de la bibliothèque',
+                es: 'Error al actualizar biblioteca',
+                ru: 'Не удалось обновить библиотеку',
+                zh: '刷新库失败',
+                ja: 'ライブラリの更新に失敗しました',
+                it: 'Impossibile aggiornare la libreria',
+                pt: 'Falha ao atualizar biblioteca',
+                ko: '라이브러리 새로고침 실패',
+                pl: 'Nie udało się odświeżyć biblioteki'
+            },
+            'manual_install': {
+                tr: 'Manuel Kurulum',
+                en: 'Manual Install',
+                de: 'Manuelle Installation',
+                fr: 'Installation manuelle',
+                es: 'Instalación manual',
+                ru: 'Ручная установка',
+                zh: '手动安装',
+                ja: '手動インストール',
+                it: 'Installazione manuale',
+                pt: 'Instalação manual',
+                ko: '수동 설치',
+                pl: 'Instalacja ręczna'
+            },
+            'upload_game_file': {
+                tr: 'Oyun Dosyasını Yükle',
+                en: 'Upload Game File',
+                de: 'Spieldatei hochladen',
+                fr: 'Télécharger le fichier de jeu',
+                es: 'Subir archivo de juego',
+                ru: 'Загрузить файл игры',
+                zh: '上传游戏文件',
+                ja: 'ゲームファイルをアップロード',
+                it: 'Carica file di gioco',
+                pt: 'Enviar arquivo do jogo',
+                ko: '게임 파일 업로드',
+                pl: 'Prześlij plik gry'
+            },
+            'drag_drop_zip': {
+                tr: 'ZIP dosyasını buraya sürükleyip bırakın veya tıklayarak seçin',
+                en: 'Drag and drop ZIP file here or click to select',
+                de: 'ZIP-Datei hierher ziehen oder klicken zum Auswählen',
+                fr: 'Glissez-déposez le fichier ZIP ici ou cliquez pour sélectionner',
+                es: 'Arrastra y suelta el archivo ZIP aquí o haz clic para seleccionar',
+                ru: 'Перетащите ZIP файл сюда или нажмите для выбора',
+                zh: '拖放ZIP文件到此处或点击选择',
+                ja: 'ZIPファイルをここにドラッグ＆ドロップするか、クリックして選択',
+                it: 'Trascina e rilascia il file ZIP qui o clicca per selezionare',
+                pt: 'Arraste e solte o arquivo ZIP aqui ou clique para selecionar',
+                ko: 'ZIP 파일을 여기에 끌어다 놓거나 클릭하여 선택',
+                pl: 'Przeciągnij i upuść plik ZIP tutaj lub kliknij, aby wybrać'
+            },
+            'select_file': {
+                tr: 'Dosya Seç',
+                en: 'Select File',
+                de: 'Datei auswählen',
+                fr: 'Sélectionner le fichier',
+                es: 'Seleccionar archivo',
+                ru: 'Выбрать файл',
+                zh: '选择文件',
+                ja: 'ファイルを選択',
+                it: 'Seleziona file',
+                pt: 'Selecionar arquivo',
+                ko: '파일 선택',
+                pl: 'Wybierz plik'
+            },
+            'game_info': {
+                tr: 'Oyun Bilgileri',
+                en: 'Game Information',
+                de: 'Spielinformationen',
+                fr: 'Informations sur le jeu',
+                es: 'Información del juego',
+                ru: 'Информация об игре',
+                zh: '游戏信息',
+                ja: 'ゲーム情報',
+                it: 'Informazioni sul gioco',
+                pt: 'Informações do jogo',
+                ko: '게임 정보',
+                pl: 'Informacje o grze'
+            },
+            'game_name': {
+                tr: 'Oyun Adı',
+                en: 'Game Name',
+                de: 'Spielname',
+                fr: 'Nom du jeu',
+                es: 'Nombre del juego',
+                ru: 'Название игры',
+                zh: '游戏名称',
+                ja: 'ゲーム名',
+                it: 'Nome del gioco',
+                pt: 'Nome do jogo',
+                ko: '게임 이름',
+                pl: 'Nazwa gry'
+            },
+            'steam_app_id': {
+                tr: 'Steam App ID ',
+                en: 'Steam App ID ',
+                de: 'Steam App ID ',
+                fr: 'ID de l\'application Steam ',
+                es: 'ID de la aplicación Steam ',
+                ru: 'ID приложения Steam ',
+                zh: 'Steam应用ID',
+                ja: 'SteamアプリID',
+                it: 'ID app Steam ',
+                pt: 'ID do aplicativo Steam',
+                ko: 'Steam 앱 ID ',
+                pl: 'ID aplikacji Steam '
+            },
+            'game_folder': {
+                tr: 'Oyun Klasörü',
+                en: 'Game Folder',
+                de: 'Spielordner',
+                fr: 'Dossier du jeu',
+                es: 'Carpeta del juego',
+                ru: 'Папка игры',
+                zh: '游戏文件夹',
+                ja: 'ゲームフォルダ',
+                it: 'Cartella del gioco',
+                pt: 'Pasta do jogo',
+                ko: '게임 폴더',
+                pl: 'Folder gry'
+            },
+            'install_game': {
+                tr: 'Oyunu Kur',
+                en: 'Install Game',
+                de: 'Spiel installieren',
+                fr: 'Installer le jeu',
+                es: 'Instalar juego',
+                ru: 'Установить игру',
+                zh: '安装游戏',
+                ja: 'ゲームをインストール',
+                it: 'Installa gioco',
+                pt: 'Instalar jogo',
+                ko: '게임 설치',
+                pl: 'Zainstaluj grę'
+            },
+            'only_zip_supported': {
+                tr: 'Sadece ZIP dosyaları desteklenir',
+                en: 'Only ZIP files are supported',
+                de: 'Nur ZIP-Dateien werden unterstützt',
+                fr: 'Seuls les fichiers ZIP sont pris en charge',
+                es: 'Solo se admiten archivos ZIP',
+                ru: 'Поддерживаются только ZIP файлы',
+                zh: '仅支持ZIP文件',
+                ja: 'ZIPファイルのみサポートされています',
+                it: 'Sono supportati solo file ZIP',
+                pt: 'Apenas arquivos ZIP são suportados',
+                ko: 'ZIP 파일만 지원됩니다',
+                pl: 'Obsługiwane są tylko pliki ZIP'
+            },
+            'file_not_found': {
+                tr: 'Seçilen dosya bulunamadı',
+                en: 'Selected file not found',
+                de: 'Ausgewählte Datei nicht gefunden',
+                fr: 'Fichier sélectionné introuvable',
+                es: 'Archivo seleccionado no encontrado',
+                ru: 'Выбранный файл не найден',
+                zh: '未找到所选文件',
+                ja: '選択されたファイルが見つかりません',
+                it: 'File selezionato non trovato',
+                pt: 'Arquivo selecionado não encontrado',
+                ko: '선택한 파일을 찾을 수 없습니다',
+                pl: 'Nie znaleziono wybranego pliku'
+            },
+            'invalid_zip': {
+                tr: 'Geçersiz ZIP dosyası',
+                en: 'Invalid ZIP file',
+                de: 'Ungültige ZIP-Datei',
+                fr: 'Fichier ZIP invalide',
+                es: 'Archivo ZIP inválido',
+                ru: 'Неверный ZIP файл',
+                zh: '无效的ZIP文件',
+                ja: '無効なZIPファイル',
+                it: 'File ZIP non valido',
+                pt: 'Arquivo ZIP inválido',
+                ko: '잘못된 ZIP 파일',
+                pl: 'Nieprawidłowy plik ZIP'
+            },
+            'game_installed_successfully': {
+                tr: 'Oyun başarıyla kuruldu',
+                en: 'Game installed successfully',
+                de: 'Spiel erfolgreich installiert',
+                fr: 'Jeu installé avec succès',
+                es: 'Juego instalado correctamente',
+                ru: 'Игра успешно установлена',
+                zh: '游戏安装成功',
+                ja: 'ゲームが正常にインストールされました',
+                it: 'Gioco installato con successo',
+                pt: 'Jogo instalado com sucesso',
+                ko: '게임이 성공적으로 설치되었습니다',
+                pl: 'Gra została pomyślnie zainstalowana'
+            },
+            'installation_failed': {
+                tr: 'Kurulum başarısız',
+                en: 'Installation failed',
+                de: 'Installation fehlgeschlagen',
+                fr: 'Échec de l\'installation',
+                es: 'Error en la instalación',
+                ru: 'Ошибка установки',
+                zh: '安装失败',
+                ja: 'インストールに失敗しました',
+                it: 'Installazione fallita',
+                pt: 'Falha na instalação',
+                ko: '설치 실패',
+                pl: 'Instalacja nie powiodła się'
+            },
+            'please_select_file': {
+                tr: 'Lütfen önce bir dosya seçin',
+                en: 'Please select a file first',
+                de: 'Bitte wählen Sie zuerst eine Datei aus',
+                fr: 'Veuillez d\'abord sélectionner un fichier',
+                es: 'Por favor, selecciona un archivo primero',
+                ru: 'Пожалуйста, сначала выберите файл',
+                zh: '请先选择文件',
+                ja: '最初にファイルを選択してください',
+                it: 'Seleziona prima un file',
+                pt: 'Por favor, selecione um arquivo primeiro',
+                ko: '먼저 파일을 선택하세요',
+                pl: 'Najpierw wybierz plik'
+            },
+
+            'installation_error': {
+                tr: 'Kurulum sırasında hata oluştu',
+                en: 'Error occurred during installation',
+                de: 'Fehler bei der Installation aufgetreten',
+                fr: 'Erreur survenue lors de l\'installation',
+                es: 'Error durante la instalación',
+                ru: 'Произошла ошибка во время установки',
+                zh: '安装过程中发生错误',
+                ja: 'インストール中にエラーが発生しました',
+                it: 'Errore durante l\'installazione',
+                pt: 'Erro durante a instalação',
+                ko: '설치 중 오류가 발생했습니다',
+                pl: 'Wystąpił błąd podczas instalacji'
+            },
+            'selected_file': {
+                tr: 'Seçilen Dosya',
+                en: 'Selected File',
+                de: 'Ausgewählte Datei',
+                fr: 'Fichier sélectionné',
+                es: 'Archivo seleccionado',
+                ru: 'Выбранный файл',
+                zh: '已选择的文件',
+                ja: '選択されたファイル',
+                it: 'File selezionato',
+                pt: 'Arquivo selecionado',
+                ko: '선택된 파일',
+                pl: 'Wybrany plik'
+            },
+            'file_name': {
+                tr: 'Dosya Adı',
+                en: 'File Name',
+                de: 'Dateiname',
+                fr: 'Nom du fichier',
+                es: 'Nombre del archivo',
+                ru: 'Имя файла',
+                zh: '文件名',
+                ja: 'ファイル名',
+                it: 'Nome file',
+                pt: 'Nome do arquivo',
+                ko: '파일 이름',
+                pl: 'Nazwa pliku'
+            },
+            'size': {
+                tr: 'Boyut',
+                en: 'Size',
+                de: 'Größe',
+                fr: 'Taille',
+                es: 'Tamaño',
+                ru: 'Размер',
+                zh: '大小',
+                ja: 'サイズ',
+                it: 'Dimensione',
+                pt: 'Tamanho',
+                ko: '크기',
+                pl: 'Rozmiar'
+            },
+            'select_another_file': {
+                tr: 'Başka Dosya Seç',
+                en: 'Select Another File',
+                de: 'Andere Datei auswählen',
+                fr: 'Sélectionner un autre fichier',
+                es: 'Seleccionar otro archivo',
+                ru: 'Выбрать другой файл',
+                zh: '选择其他文件',
+                ja: '別のファイルを選択',
+                it: 'Seleziona altro file',
+                pt: 'Selecionar outro arquivo',
+                ko: '다른 파일 선택',
+                pl: 'Wybierz inny plik'
             }
         };
         return dict[key] && dict[key][lang] ? dict[key][lang] : dict[key]?.tr || key;
@@ -1669,112 +2056,180 @@ class SteamLibraryUI {
             const res = await fetch('https://muhammetdag.com/api/v1/onlineliste.php');
             const data = await res.json();
             if (!data.files || !Array.isArray(data.files)) throw new Error('Online oyun listesi alınamadı');
-            this.onlinePassAppIds = data.files;
-            this.onlinePassGames = [];
-            this.onlinePassPage = 0;
-            this.onlinePassPageSize = 12;
-            await this.loadMoreOnlinePassGames();
+            this.onlinePassGames = data.files;
+            this.onlinePassFilteredGames = data.files;
+            this.onlinePassCurrentPage = 0;
+            this.renderOnlinePassGames();
         } catch (err) {
             onlineGrid.innerHTML = `<div style='color:#fff;padding:16px;'>Online oyunlar yüklenemedi: ${err.message}</div>`;
         }
     }
 
-    async loadMoreOnlinePassGames() {
-        const cc = this.countryCode || 'TR';
-        const lang = this.getSelectedLang();
-        const start = this.onlinePassPage * this.onlinePassPageSize;
-        const end = start + this.onlinePassPageSize;
-        const appIds = this.onlinePassAppIds.slice(start, end);
-        if (appIds.length === 0) return;
-        const games = await Promise.all(appIds.map(async appid => {
-            try {
-                const detailRes = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appid}&cc=${cc}&l=${lang}`);
-                const detailData = await detailRes.json();
-                const gameData = detailData[appid]?.data;
-                if (!gameData) return null;
-                return {
-                    appid,
-                    name: gameData.name,
-                    header_image: gameData.header_image,
-                    price: gameData.price_overview ? gameData.price_overview.final : 0,
-                    discount_percent: gameData.price_overview ? gameData.price_overview.discount_percent : 0,
-                    platforms: gameData.platforms,
-                    coming_soon: gameData.release_date?.coming_soon,
-                    short_description: gameData.short_description,
-                    reviews: gameData.recommendations ? 'Çok Olumlu' : '',
-                    is_dlc: false
-                };
-            } catch {
-                return null;
-            }
-        }));
-        this.onlinePassGames = this.onlinePassGames.concat(games.filter(Boolean));
-        this.onlinePassPage++;
-        this.renderOnlinePassGames();
-    }
 
-    renderOnlinePassGames(list) {
+
+    async renderOnlinePassGames(list) {
         const onlineGrid = document.getElementById('onlinePassPage');
         if (!onlineGrid) return;
+        
+        // Sayfa başlığını oluştur
         onlineGrid.innerHTML = `<div class='page-header' style='width:100%;display:flex;justify-content:center;align-items:center;margin-bottom:24px;'><h1 style='font-size:2.2rem;font-weight:800;color:#00bfff;display:inline-block;'>Online Pass</h1></div>`;
-        const games = list || this.onlinePassGames;
+        
+        // Filtrelenmiş oyunları kullan (list parametresi artık kullanılmıyor)
+        const games = this.onlinePassFilteredGames;
         if (!games || games.length === 0) {
             onlineGrid.innerHTML += `<div style='color:#fff;padding:16px;'>Hiç online oyun bulunamadı.</div>`;
             return;
         }
+        
+        // Sayfalama hesaplamaları
+        const startIndex = this.onlinePassCurrentPage * this.onlinePassGamesPerPage;
+        const endIndex = startIndex + this.onlinePassGamesPerPage;
+        const currentPageGames = games.slice(startIndex, endIndex);
+        const totalPages = Math.ceil(games.length / this.onlinePassGamesPerPage);
+        
+        // Oyun grid'ini oluştur
         const grid = document.createElement('div');
         grid.style.display = 'grid';
         grid.style.gridTemplateColumns = 'repeat(auto-fit, 300px)';
         grid.style.justifyContent = 'center';
         grid.style.gap = '24px';
         grid.style.padding = '24px 0 0 0';
-        grid.style.maxWidth = '%100';
+        grid.style.maxWidth = '100%';
         grid.style.margin = '0';
-            games.forEach(game => {
+        
+        // Oyun kartlarını asenkron olarak oluştur
+        const createGameCard = async (gameId) => {
             const card = document.createElement('div');
             card.className = 'game-card';
             card.style.background = '#181c22';
             card.style.borderRadius = '14px';
             card.style.cursor = 'pointer';
             card.style.boxShadow = '0 2px 12px #0002';
-            card.onclick = () => this.showGameDetails(game);
-            let imageUrl = game.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${game.appid}/capsule_616x353.jpg`;
-            card.innerHTML = `
-                <img src="${imageUrl}" alt="${game.name}" class="game-image" loading="lazy" style="width:100%;height:160px;object-fit:cover;border-radius:12px 12px 0 0;">
-                <div class="game-info" style="padding:12px;">
-                    <h3 class="game-title" style="font-size:18px;font-weight:700;margin-bottom:4px;">${game.name}</h3>
-                    <div class="game-meta" style="margin-bottom:6px;"></div>
-                    <button class="game-btn primary" style="width:100%;margin-top:8px;" data-online-add>Online Ekle</button>
-                    <button class="game-btn secondary" style="width:100%;margin-top:8px;background:#222;color:#00bfff;border:1px solid #00bfff;" onclick="event.stopPropagation(); window.open('https://store.steampowered.com/app/${game.appid}','_blank')">Steam Sayfası</button>
-                </div>
-            `;
+            
+            try {
+                // Steam API'den oyun bilgilerini çek
+                const steamResponse = await fetch(`https://store.steampowered.com/api/appdetails?appids=${gameId}&l=turkish`);
+                const steamData = await steamResponse.json();
+                
+                let gameName = `Oyun ID: ${gameId}`;
+                let imageUrl = `https://cdn.akamai.steamstatic.com/steam/apps/${gameId}/header.jpg`;
+                
+                if (steamData[gameId] && steamData[gameId].success && steamData[gameId].data) {
+                    const gameData = steamData[gameId].data;
+                    gameName = gameData.name || gameName;
+                    imageUrl = gameData.header_image || imageUrl;
+                }
+                
+                const steamUrl = `https://store.steampowered.com/app/${gameId}`;
+                
+                card.innerHTML = `
+                    <img src="${imageUrl}" alt="${gameName}" class="game-image" loading="lazy" style="width:100%;height:160px;object-fit:cover;border-radius:12px 12px 0 0;" onerror="this.src='https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok'">
+                    <div class="game-info" style="padding:12px;">
+                        <h3 class="game-title" style="font-size:18px;font-weight:700;margin-bottom:4px;">${gameName}</h3>
+                        <div class="game-meta" style="margin-bottom:6px;">
+                            <span style="color:#00bfff;font-size:12px;">Online Pass</span>
+                        </div>
+                        <button class="game-btn primary" style="width:100%;margin-top:8px;" data-online-add data-appid="${gameId}">Online Ekle</button>
+                        <button class="game-btn secondary" style="width:100%;margin-top:8px;background:#222;color:#00bfff;border:1px solid #00bfff;" onclick="event.stopPropagation(); window.open('${steamUrl}','_blank')">Steam Sayfası</button>
+                    </div>
+                `;
+            } catch (error) {
+                // Hata durumunda basit kart göster
+                const steamUrl = `https://store.steampowered.com/app/${gameId}`;
+                const imageUrl = `https://cdn.akamai.steamstatic.com/steam/apps/${gameId}/header.jpg`;
+                
+                card.innerHTML = `
+                    <img src="${imageUrl}" alt="Game ${gameId}" class="game-image" loading="lazy" style="width:100%;height:160px;object-fit:cover;border-radius:12px 12px 0 0;" onerror="this.src='https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok'">
+                    <div class="game-info" style="padding:12px;">
+                        <h3 class="game-title" style="font-size:18px;font-weight:700;margin-bottom:4px;">Oyun ID: ${gameId}</h3>
+                        <div class="game-meta" style="margin-bottom:6px;">
+                            <span style="color:#00bfff;font-size:12px;">Online Pass</span>
+                        </div>
+                        <button class="game-btn primary" style="width:100%;margin-top:8px;" data-online-add data-appid="${gameId}">Online Ekle</button>
+                        <button class="game-btn secondary" style="width:100%;margin-top:8px;background:#222;color:#00bfff;border:1px solid #00bfff;" onclick="event.stopPropagation(); window.open('${steamUrl}','_blank')">Steam Sayfası</button>
+                    </div>
+                `;
+            }
+            
+            return card;
+        };
+
+        // Oyun kartlarını paralel olarak oluştur
+        const cardPromises = currentPageGames.map(game => createGameCard(game));
+        const cards = await Promise.all(cardPromises);
+        
+        cards.forEach(card => {
             grid.appendChild(card);
         });
         onlineGrid.appendChild(grid);
-        // Daha Fazla Yükle butonu
-        if (this.onlinePassGames.length < this.onlinePassAppIds.length) {
-            const moreBtn = document.createElement('button');
-            moreBtn.innerText = 'Daha Fazla Yükle';
-            moreBtn.className = 'game-btn primary';
-            moreBtn.style = 'width:220px;display:block;margin:32px auto 0 auto;font-size:1.1rem;';
-            moreBtn.onclick = () => this.loadMoreOnlinePassGames();
-            onlineGrid.appendChild(moreBtn);
+        
+        // Sayfalama kontrollerini ekle
+        if (totalPages > 1) {
+            const paginationContainer = document.createElement('div');
+            paginationContainer.style.display = 'flex';
+            paginationContainer.style.justifyContent = 'center';
+            paginationContainer.style.alignItems = 'center';
+            paginationContainer.style.gap = '12px';
+            paginationContainer.style.marginTop = '32px';
+            paginationContainer.style.padding = '16px';
+            
+            // Önceki sayfa butonu
+            const prevBtn = document.createElement('button');
+            prevBtn.textContent = '← Önceki';
+            prevBtn.style.padding = '8px 16px';
+            prevBtn.style.background = this.onlinePassCurrentPage > 0 ? '#00bfff' : '#444';
+            prevBtn.style.color = '#fff';
+            prevBtn.style.border = 'none';
+            prevBtn.style.borderRadius = '6px';
+            prevBtn.style.cursor = this.onlinePassCurrentPage > 0 ? 'pointer' : 'not-allowed';
+            prevBtn.onclick = () => {
+                if (this.onlinePassCurrentPage > 0) {
+                    this.onlinePassCurrentPage--;
+                    this.renderOnlinePassGames();
+                }
+            };
+            
+            // Sayfa bilgisi
+            const pageInfo = document.createElement('span');
+            pageInfo.textContent = `Sayfa ${this.onlinePassCurrentPage + 1} / ${totalPages} (${games.length} oyun)`;
+            pageInfo.style.color = '#fff';
+            pageInfo.style.fontSize = '14px';
+            
+            // Sonraki sayfa butonu
+            const nextBtn = document.createElement('button');
+            nextBtn.textContent = 'Sonraki →';
+            nextBtn.style.padding = '8px 16px';
+            nextBtn.style.background = this.onlinePassCurrentPage < totalPages - 1 ? '#00bfff' : '#444';
+            nextBtn.style.color = '#fff';
+            nextBtn.style.border = 'none';
+            nextBtn.style.borderRadius = '6px';
+            nextBtn.style.cursor = this.onlinePassCurrentPage < totalPages - 1 ? 'pointer' : 'not-allowed';
+            nextBtn.onclick = () => {
+                if (this.onlinePassCurrentPage < totalPages - 1) {
+                    this.onlinePassCurrentPage++;
+                    this.renderOnlinePassGames();
+                }
+            };
+            
+            paginationContainer.appendChild(prevBtn);
+            paginationContainer.appendChild(pageInfo);
+            paginationContainer.appendChild(nextBtn);
+            onlineGrid.appendChild(paginationContainer);
         }
+        
         // Online Ekle butonlarına event listener ekle
-        const onlineAddModal = document.getElementById('onlineAddModal');
-        document.querySelectorAll('button[data-online-add]').forEach((btn, idx) => {
+        document.querySelectorAll('button[data-online-add]').forEach((btn) => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                // Online oyunun steamid'sini bul
-                const game = games[idx];
-                if (!game || !game.appid) return;
+                const appId = btn.getAttribute('data-appid');
+                if (!appId) return;
+                
                 // Ana sürece dosya indirme isteği gönder
                 try {
-                    await ipcRenderer.invoke('download-online-file', game.appid);
+                    await ipcRenderer.invoke('download-online-file', appId);
                 } catch (err) {
                     ui.showNotification('error', 'İndirme başarısız: ' + (err.message || err), 'error');
                 }
-                if (onlineAddModal) onlineAddModal.style.display = 'flex';
             });
         });
     }
@@ -1783,6 +2238,290 @@ class SteamLibraryUI {
         const active = document.querySelector('.page.active');
         if (!active) return null;
         return active.id.replace('Page', '');
+    }
+
+    async getGameImageUrl(appId, gameName) {
+        // Önce CDN'den görsel almaya çalış (daha hızlı)
+        const cdnUrl = `https://cdn.akamai.steamstatic.com/steam/apps/${appId}/capsule_616x353.jpg`;
+        
+        try {
+            const imgResponse = await fetch(cdnUrl, { method: 'HEAD' });
+            if (imgResponse.ok) {
+                return cdnUrl;
+            }
+        } catch (error) {
+            console.log(`CDN'den görsel alınamadı: ${appId}`, error);
+        }
+        
+        // CDN'den alamazsa Steam API'den dene
+        try {
+            const response = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appId}`);
+            const data = await response.json();
+            
+            if (data[appId] && data[appId].success && data[appId].data) {
+                const gameData = data[appId].data;
+                
+                // Önce header_image'i dene
+                if (gameData.header_image) {
+                    return gameData.header_image;
+                }
+                
+                // Sonra capsule_image'i dene
+                if (gameData.capsule_image) {
+                    return gameData.capsule_image;
+                }
+            }
+        } catch (error) {
+            console.log(`Steam API'den görsel alınamadı: ${appId}`, error);
+        }
+        
+        // Hiçbiri çalışmazsa varsayılan görsel
+        return 'https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok';
+    }
+
+    setupManualInstallListeners() {
+        // Önce eski event listener'ları temizle
+        this.cleanupManualInstallListeners();
+        
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('gameFileInput');
+        const selectFileBtn = document.getElementById('selectFileBtn');
+        const installGameBtn = document.getElementById('installGameBtn');
+
+        if (uploadArea) {
+            // Dosya seçme butonu
+            this.manualUploadAreaHandler = () => {
+                fileInput.click();
+            };
+            uploadArea.addEventListener('click', this.manualUploadAreaHandler);
+
+            // Drag and drop olayları
+            this.manualDragOverHandler = (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+            };
+            uploadArea.addEventListener('dragover', this.manualDragOverHandler);
+
+            this.manualDragLeaveHandler = () => {
+                uploadArea.classList.remove('dragover');
+            };
+            uploadArea.addEventListener('dragleave', this.manualDragLeaveHandler);
+
+            this.manualDropHandler = (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    this.handleFileSelect(files[0]);
+                }
+            };
+            uploadArea.addEventListener('drop', this.manualDropHandler);
+        }
+
+        if (selectFileBtn) {
+            this.manualSelectFileHandler = (e) => {
+                e.stopPropagation();
+                fileInput.click();
+            };
+            selectFileBtn.addEventListener('click', this.manualSelectFileHandler);
+        }
+
+        if (fileInput) {
+            this.manualFileInputHandler = (e) => {
+                if (e.target.files.length > 0) {
+                    this.handleFileSelect(e.target.files[0]);
+                }
+            };
+            fileInput.addEventListener('change', this.manualFileInputHandler);
+        }
+
+        if (installGameBtn) {
+            this.manualInstallGameHandler = () => {
+                this.installManualGame();
+            };
+            installGameBtn.addEventListener('click', this.manualInstallGameHandler);
+        }
+    }
+
+    cleanupManualInstallListeners() {
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('gameFileInput');
+        const selectFileBtn = document.getElementById('selectFileBtn');
+        const installGameBtn = document.getElementById('installGameBtn');
+
+        if (uploadArea && this.manualUploadAreaHandler) {
+            uploadArea.removeEventListener('click', this.manualUploadAreaHandler);
+            uploadArea.removeEventListener('dragover', this.manualDragOverHandler);
+            uploadArea.removeEventListener('dragleave', this.manualDragLeaveHandler);
+            uploadArea.removeEventListener('drop', this.manualDropHandler);
+        }
+
+        if (selectFileBtn && this.manualSelectFileHandler) {
+            selectFileBtn.removeEventListener('click', this.manualSelectFileHandler);
+        }
+
+        if (fileInput && this.manualFileInputHandler) {
+            fileInput.removeEventListener('change', this.manualFileInputHandler);
+        }
+
+        if (installGameBtn && this.manualInstallGameHandler) {
+            installGameBtn.removeEventListener('click', this.manualInstallGameHandler);
+        }
+    }
+
+    async handleFileSelect(file) {
+        if (!file.name.toLowerCase().endsWith('.zip')) {
+            this.showNotification('error', 'only_zip_supported', 'error');
+            return;
+        }
+
+        // Dosya bilgilerini göster
+        const fileSize = (file.size / (1024 * 1024)).toFixed(2);
+        const uploadArea = document.getElementById('uploadArea');
+        
+        uploadArea.innerHTML = `
+            <div class="file-info">
+                <h4>${this.translate('selected_file')}</h4>
+                <p><strong>${this.translate('file_name')}:</strong> ${file.name}</p>
+                <p><strong>${this.translate('size')}:</strong> ${fileSize} MB</p>
+                <button class="upload-btn" id="selectAnotherFileBtn">${this.translate('select_another_file')}</button>
+            </div>
+        `;
+        
+        // Yeni butona event listener ekle
+        const selectAnotherFileBtn = document.getElementById('selectAnotherFileBtn');
+        if (selectAnotherFileBtn) {
+            selectAnotherFileBtn.addEventListener('click', () => {
+                this.selectNewFile();
+            });
+        }
+
+        // Oyun bilgileri formunu göster
+        document.getElementById('gameInfoSection').style.display = 'block';
+        document.getElementById('installActions').style.display = 'block';
+
+        // Dosyayı sakla
+        this.selectedFile = file;
+
+        // ZIP dosyasından oyun bilgilerini çek
+        try {
+            const gameInfo = await this.extractGameInfoFromZip(file);
+            document.getElementById('gameNameDisplay').textContent = gameInfo.name || 'Bilinmeyen Oyun';
+            document.getElementById('gameIdDisplay').textContent = gameInfo.appId || 'Bilinmeyen ID';
+        } catch (error) {
+            console.error('Failed to extract game info:', error);
+            document.getElementById('gameNameDisplay').textContent = 'Bilinmeyen Oyun';
+            document.getElementById('gameIdDisplay').textContent = 'Bilinmeyen ID';
+        }
+    }
+
+    selectNewFile() {
+        document.getElementById('gameFileInput').click();
+    }
+
+    async extractGameInfoFromZip(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const arrayBuffer = e.target.result;
+                    const zip = await JSZip.loadAsync(arrayBuffer);
+                    
+                    // ZIP içindeki dosyaları kontrol et
+                    const files = Object.keys(zip.files);
+                    
+                    // .lua dosyalarını ara (oyun ID'si için)
+                    const luaFiles = files.filter(name => name.endsWith('.lua'));
+                    let appId = null;
+                    
+                    for (const luaFile of luaFiles) {
+                        const fileName = luaFile.split('/').pop().replace('.lua', '');
+                        if (/^\d+$/.test(fileName)) {
+                            appId = fileName;
+                            break;
+                        }
+                    }
+                    
+                    // App ID'den oyun adını çek
+                    let gameName = 'Bilinmeyen Oyun';
+                    if (appId) {
+                        try {
+                            const gameDetails = await ipcRenderer.invoke('fetch-game-details', appId);
+                            if (gameDetails && gameDetails.name) {
+                                gameName = gameDetails.name;
+                            }
+                        } catch (error) {
+                            console.log('Could not fetch game details for ID:', appId);
+                        }
+                    }
+                    
+                    resolve({
+                        appId: appId,
+                        name: gameName
+                    });
+                } catch (error) {
+                    reject(error);
+                }
+            };
+            reader.onerror = reject;
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+
+
+    async installManualGame() {
+        if (!this.selectedFile) {
+            this.showNotification('error', 'please_select_file', 'error');
+            return;
+        }
+
+        this.showLoading();
+        try {
+            const result = await ipcRenderer.invoke('install-manual-game', {
+                file: this.selectedFile.path
+            });
+
+            if (result.success) {
+                this.showNotification('success', 'game_installed_successfully', 'success');
+                this.resetManualInstallForm();
+            } else {
+                this.showNotification('error', result.error || 'installation_failed', 'error');
+            }
+        } catch (error) {
+            console.error('Failed to install manual game:', error);
+            this.showNotification('error', 'installation_error', 'error');
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    resetManualInstallForm() {
+        // Event listener'ları temizle
+        this.cleanupManualInstallListeners();
+        
+        // Formu sıfırla
+        document.getElementById('gameInfoSection').style.display = 'none';
+        document.getElementById('installActions').style.display = 'none';
+        
+        // Upload alanını geri yükle
+        const uploadArea = document.getElementById('uploadArea');
+        uploadArea.innerHTML = `
+            <div class="upload-icon">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7,10 12,15 17,10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+            </div>
+            <h3 data-i18n="upload_game_file">Oyun Dosyasını Yükle</h3>
+            <p data-i18n="drag_drop_zip">ZIP dosyasını buraya sürükleyip bırakın veya tıklayarak seçin</p>
+            <input type="file" id="gameFileInput" accept=".zip" style="display:none;">
+            <button class="upload-btn" id="selectFileBtn" data-i18n="select_file">Dosya Seç</button>
+        `;
+        
+        this.selectedFile = null;
+        this.setupManualInstallListeners();
     }
 }
 
@@ -1803,6 +2542,13 @@ function renderAllTexts() {
     const key = el.getAttribute('data-i18n-placeholder');
     if (key) {
       el.setAttribute('placeholder', ui.translate(key));
+    }
+  });
+  // data-i18n-title ile işaretlenmiş elemanların title'ını güncelle
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const key = el.getAttribute('data-i18n-title');
+    if (key) {
+      el.setAttribute('title', ui.translate(key));
     }
   });
 }

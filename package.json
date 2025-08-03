@@ -8,6 +8,7 @@
     "dev": "electron . --dev",
     "build": "electron-builder",
     "build-win": "electron-builder --win",
+    "build-portable": "electron-builder --win portable",
     "pack": "electron-builder --dir",
     "dist": "electron-builder --publish=never"
   },
@@ -25,11 +26,15 @@
     "electron-builder": "^24.13.3"
   },
   "dependencies": {
+    "adm-zip": "^0.5.16",
     "axios": "^1.6.0",
     "discord-rpc": "^4.0.1",
+    "edge-js": "^24.0.4",
     "fs-extra": "^11.1.1",
+    "node-unrar-js": "^2.0.2",
     "uuid": "^11.1.0",
-    "yauzl": "^2.10.0"
+    "yauzl": "^2.10.0",
+    "yauzl-promise": "^2.1.3"
   },
   "build": {
     "appId": "com.seninuygulaman.steamlibrary",
@@ -44,10 +49,17 @@
     ],
     "win": {
       "target": [
-        "nsis"
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        },
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
       ],
       "icon": "pdlogo.ico"
-        },
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true

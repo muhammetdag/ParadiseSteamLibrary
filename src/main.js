@@ -4,9 +4,12 @@ const fs = require('fs-extra');
 const os = require('os');
 const axios = require('axios');
 const yauzl = require('yauzl');
+const yauzlPromise = require('yauzl-promise');
 const { spawn, exec } = require('child_process');
 const tmp = require('os').tmpdir();
 const { v4: uuidv4 } = require('uuid'); // Eğer uuid yoksa npm install uuid
+const AdmZip = require('adm-zip');
+
 
 class SteamLibraryManager {
   constructor() {
@@ -247,75 +250,259 @@ class SteamLibraryManager {
       shell.openExternal(url);
     });
 
-    // Online oyun dosyası indirme
-    ipcMain.handle('download-online-file', async (event, steamid) => {
-      const tempZipPath = path.join(tmp, `${steamid}_${uuidv4()}.zip`);
+    // Klasör seçme
+    ipcMain.handle('select-directory', async (event, title) => {
+      const result = await dialog.showOpenDialog(this.mainWindow, {
+        properties: ['openDirectory'],
+        title: title || 'Klasör Seçin'
+      });
+      return result;
+    });
+
+    // Manuel oyun kurulumu
+    ipcMain.handle('install-manual-game', async (event, gameData) => {
       try {
+        if (!this.config.steamPath) {
+          throw new Error('Steam path not configured');
+        }
+
+        const { file } = gameData;
+        
+        // Dosya varlığını kontrol et
+        if (!await fs.pathExists(file)) {
+          throw new Error('Seçilen dosya bulunamadı');
+        }
+
+        // Dosya boyutunu kontrol et
+        const stats = await fs.stat(file);
+        if (stats.size < 1000) {
+          throw new Error('Dosya çok küçük veya bozuk');
+        }
+
+        // Dosya türünü kontrol et
+        const buffer = await fs.readFile(file);
+        const isZip = buffer.slice(0, 4).toString('hex') === '504b0304';
+        
+        if (!isZip) {
+          throw new Error('Geçersiz ZIP dosyası');
+        }
+
+        // ZIP dosyasını ayıkla ve oyun bilgilerini çek
+        const gameInfo = await this.extractManualGameFiles(file);
+        
+        return { success: true, message: 'Oyun başarıyla kuruldu', gameInfo };
+      } catch (error) {
+        console.error('Failed to install manual game:', error);
+        throw error;
+      }
+    });
+
+    // Online oyun dosyası indirme - YENİ SİSTEM
+    ipcMain.handle('download-online-file', async (event, appId) => {
+      try {
+        console.log('Downloading online file for appId:', appId);
+        
+        // Önce oyun bilgilerini al
+        const gamesResponse = await axios.get('https://muhammetdag.com/api/v1/online/online_fix_games.json');
+        const games = gamesResponse.data;
+        
+        const game = games.find(g => g.appid === parseInt(appId));
+        
+        if (!game) {
+          console.error('Game not found in list. Available appIds:', games.map(g => g.appid));
+          throw new Error('Oyun bulunamadı');
+        }
+        
         // Klasör seçtir
         const { canceled, filePaths } = await dialog.showOpenDialog({
-          title: 'Klasör Seçin',
+          title: 'Oyun Klasörünü Seçin',
           properties: ['openDirectory', 'createDirectory']
         });
         if (canceled || !filePaths || !filePaths[0]) return;
 
         const targetDir = filePaths[0];
 
-        // Zip dosyasını temp'e indir
-        const url = `https://muhammetdag.com/api/v1/online.php?steamid=${steamid}`;
-        const response = await axios({
-          url,
-          method: 'GET',
-          responseType: 'stream',
-          timeout: 60000
-        });
-        await new Promise((resolve, reject) => {
-          const writer = fs.createWriteStream(tempZipPath);
-          response.data.pipe(writer);
-          writer.on('finish', resolve);
-          writer.on('error', reject);
-        });
-
-        // Zip'i ayıkla
-        await new Promise((resolve, reject) => {
-          yauzl.open(tempZipPath, { lazyEntries: true }, (err, zipfile) => {
-            if (err) return reject(err);
-            zipfile.readEntry();
-            zipfile.on('entry', entry => {
-              const entryPath = path.join(targetDir, entry.fileName);
-              if (/\/$/.test(entry.fileName)) {
-                // Klasör ise oluştur
-                fs.ensureDir(entryPath, err => {
-                  if (err) return reject(err);
-                  zipfile.readEntry();
-                });
-              } else {
-                // Dosya ise çıkar
-                zipfile.openReadStream(entry, (err, readStream) => {
-                  if (err) return reject(err);
-                  fs.ensureDir(path.dirname(entryPath), err => {
-                    if (err) return reject(err);
-                    const writeStream = fs.createWriteStream(entryPath);
-                    readStream.pipe(writeStream);
-                    writeStream.on('finish', () => {
-                      zipfile.readEntry();
-                    });
-                  });
-                });
-              }
-            });
-            zipfile.on('end', resolve);
-            zipfile.on('error', reject);
+        // Dosya indirme işlemi
+        const tempZipPath = path.join(tmp, `${appId}_${uuidv4()}.zip`);
+        
+        try {
+          // Dosyayı temp'e indir
+          const downloadResponse = await axios.get(`https://muhammetdag.com/api/v1/online/index.php?appid=${appId}`, {
+            responseType: 'stream',
+            timeout: 120000,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Accept': 'application/zip,application/octet-stream,*/*',
+              'Accept-Encoding': 'gzip, deflate',
+              'Connection': 'keep-alive'
+            }
           });
-        });
 
-        // Temp zip dosyasını sil
-        await fs.remove(tempZipPath);
+          await new Promise((resolve, reject) => {
+            const writer = fs.createWriteStream(tempZipPath);
+            downloadResponse.data.pipe(writer);
+            writer.on('finish', resolve);
+            writer.on('error', reject);
+          });
+
+          // Dosya boyutunu kontrol et
+          const stats = await fs.stat(tempZipPath);
+          if (stats.size < 1000) {
+            throw new Error('İndirilen dosya çok küçük veya erişilemiyor');
+          }
+
+          // Dosya türünü kontrol et
+          const buffer = await fs.readFile(tempZipPath);
+          const isZip = buffer.slice(0, 4).toString('hex') === '504b0304';
+          
+          if (!isZip) {
+            // ZIP değilse, dosyayı doğrudan kopyala
+            const targetFile = path.join(targetDir, `${game.name.replace(/[^a-zA-Z0-9]/g, '_')}.zip`);
+            await fs.copy(tempZipPath, targetFile);
+            await fs.remove(tempZipPath);
+            return true;
+          }
+
+          // ZIP dosyasını ayıkla
+          try {
+            await this.extractZipFile(tempZipPath, targetDir);
+          } catch (zipError) {
+            console.log('ZIP ayıklama başarısız, dosyayı doğrudan kopyalıyor:', zipError.message);
+            // ZIP ayıklama başarısız olursa, dosyayı doğrudan kopyala
+            const targetFile = path.join(targetDir, `${game.name.replace(/[^a-zA-Z0-9]/g, '_')}.zip`);
+            await fs.copy(tempZipPath, targetFile);
+          }
+
+          // Temp dosyasını sil
+          try {
+            await fs.remove(tempZipPath);
+          } catch (removeError) {
+            console.log('Temp dosyası silinemedi:', removeError.message);
+          }
+
+        } catch (err) {
+          try { await fs.remove(tempZipPath); } catch {}
+          console.error('Download error details:', {
+            appId,
+            url: `https://muhammetdag.com/api/v1/online/index.php?appid=${appId}`,
+            error: err.message,
+            status: err.response?.status,
+            statusText: err.response?.statusText,
+            data: err.response?.data
+          });
+          throw new Error(`Dosya indirme hatası: ${err.message}`);
+        }
+
         return true;
       } catch (err) {
-        try { await fs.remove(tempZipPath); } catch {}
         throw err;
       }
     });
+
+    // YENİ SİSTEM - YORUM SATIRINA ALINDI
+    // ipcMain.handle('download-online-file', async (event, appId) => {
+    //   try {
+    //     console.log('Downloading online file for appId:', appId);
+    //     
+    //     // Önce oyun bilgilerini al
+    //     const gamesResponse = await axios.get('https://muhammetdag.com/api/v1/online/online_fix_games.json');
+    //     const games = gamesResponse.data;
+    //     //console.log('Available games:', games);
+    //     
+    //     const game = games.find(g => g.appid === parseInt(appId));
+    //     
+    //     if (!game) {
+    //       console.error('Game not found in list. Available appIds:', games.map(g => g.appid));
+    //       throw new Error('Oyun bulunamadı');
+    //     }
+    //     
+    //     //console.log('Found game:', game);
+
+    //     // Klasör seçtir
+    //     const { canceled, filePaths } = await dialog.showOpenDialog({
+    //       title: 'Oyun Klasörünü Seçin',
+    //       properties: ['openDirectory', 'createDirectory']
+    //     });
+    //     if (canceled || !filePaths || !filePaths[0]) return;
+
+    //     const targetDir = filePaths[0];
+
+    //     // Dosya indirme işlemi
+    //     const tempZipPath = path.join(tmp, `${appId}_${uuidv4()}.zip`);
+    //     
+    //     try {
+    //       // Dosyayı temp'e indir
+    //       const downloadResponse = await axios.get(`https://muhammetdag.com/api/v1/online/index.php?appid=${appId}`, {
+    //         responseType: 'stream',
+    //         timeout: 120000,
+    //         headers: {
+    //           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    //           'Accept': 'application/zip,application/octet-stream,*/*',
+    //           'Accept-Encoding': 'gzip, deflate',
+    //           'Connection': 'keep-alive'
+    //         }
+    //       });
+
+    //       await new Promise((resolve, reject) => {
+    //         const writer = fs.createWriteStream(tempZipPath);
+    //         downloadResponse.data.pipe(writer);
+    //         writer.on('finish', resolve);
+    //         writer.on('error', reject);
+    //       });
+
+    //       // Dosya boyutunu kontrol et
+    //       const stats = await fs.stat(tempZipPath);
+    //       if (stats.size < 1000) {
+    //         throw new Error('İndirilen dosya çok küçük veya erişilemiyor');
+    //       }
+
+    //       // Dosya türünü kontrol et
+    //       const buffer = await fs.readFile(tempZipPath);
+    //       const isZip = buffer.slice(0, 4).toString('hex') === '504b0304';
+    //       
+    //       if (!isZip) {
+    //         // ZIP değilse, dosyayı doğrudan kopyala
+    //         const targetFile = path.join(targetDir, `${game.name.replace(/[^a-zA-Z0-9]/g, '_')}.zip`);
+    //         await fs.copy(tempZipPath, targetFile);
+    //         await fs.remove(tempZipPath);
+    //         return true;
+    //       }
+
+    //       // ZIP dosyasını ayıkla
+    //       try {
+    //         await this.extractZipFile(tempZipPath, targetDir);
+    //       } catch (zipError) {
+    //         console.log('ZIP ayıklama başarısız, dosyayı doğrudan kopyalıyor:', zipError.message);
+    //         // ZIP ayıklama başarısız olursa, dosyayı doğrudan kopyala
+    //         const targetFile = path.join(targetDir, `${game.name.replace(/[^a-zA-Z0-9]/g, '_')}.zip`);
+    //         await fs.copy(tempZipPath, targetFile);
+    //       }
+
+    //       // Temp dosyasını sil
+    //       try {
+    //         await fs.remove(tempZipPath);
+    //       } catch (removeError) {
+    //         console.log('Temp dosyası silinemedi:', removeError.message);
+    //       }
+
+    //     } catch (err) {
+    //       try { await fs.remove(tempZipPath); } catch {}
+    //       console.error('Download error details:', {
+    //         appId,
+    //         url: `https://muhammetdag.com/api/v1/online/index.php?appid=${appId}`,
+    //         error: err.message,
+    //         status: err.response?.status,
+    //         statusText: err.response?.statusText,
+    //         data: err.response?.data
+    //       });
+    //       throw new Error(`Dosya indirme hatası: ${err.message}`);
+    //     }
+
+    //     return true;
+    //   } catch (err) {
+    //     throw err;
+    //   }
+    // });
   }
 
   async ensureSteamDirectories() {
@@ -790,6 +977,140 @@ class SteamLibraryManager {
       return { success: false, error: error.message };
     }
   }
+
+  async getFileSize(url) {
+    try {
+      const response = await axios.head(url, {
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+      return parseInt(response.headers['content-length'] || '0');
+    } catch (error) {
+      console.error('Failed to get file size:', error);
+      return 0;
+    }
+  }
+
+
+
+  async extractManualGameFiles(zipPath) {
+    const stpluginDir = path.join(this.config.steamPath, 'config', 'stplug-in');
+    const depotcacheDir = path.join(this.config.steamPath, 'config', 'depotcache');
+    
+    // Klasörleri oluştur
+    await fs.ensureDir(stpluginDir);
+    await fs.ensureDir(depotcacheDir);
+    
+    let appId = null;
+    let gameName = 'Bilinmeyen Oyun';
+    
+    return new Promise((resolve, reject) => {
+      yauzl.open(zipPath, { lazyEntries: true }, (err, zipfile) => {
+        if (err) return reject(err);
+        
+        zipfile.readEntry();
+        zipfile.on('entry', (entry) => {
+          if (/\/$/.test(entry.fileName)) {
+            zipfile.readEntry();
+          } else {
+            zipfile.openReadStream(entry, (err, readStream) => {
+              if (err) return reject(err);
+              
+              let targetPath;
+              if (entry.fileName.endsWith('.lua')) {
+                targetPath = path.join(stpluginDir, path.basename(entry.fileName));
+                // App ID'yi çıkar
+                const fileName = path.basename(entry.fileName, '.lua');
+                if (/^\d+$/.test(fileName)) {
+                  appId = fileName;
+                }
+              } else if (entry.fileName.endsWith('.manifest')) {
+                targetPath = path.join(depotcacheDir, path.basename(entry.fileName));
+              } else {
+                zipfile.readEntry();
+                return;
+              }
+              
+              const writeStream = fs.createWriteStream(targetPath);
+              readStream.pipe(writeStream);
+              
+              writeStream.on('close', () => {
+                zipfile.readEntry();
+              });
+            });
+          }
+        });
+        
+        zipfile.on('end', async () => {
+          // App ID'den oyun adını çek
+          if (appId) {
+            try {
+              const gameDetails = await this.fetchGameDetails(appId);
+              if (gameDetails && gameDetails.name) {
+                gameName = gameDetails.name;
+              }
+            } catch (error) {
+              console.log('Could not fetch game details for ID:', appId);
+            }
+          }
+          
+          resolve({
+            appId: appId,
+            name: gameName
+          });
+        });
+        
+        zipfile.on('error', reject);
+      });
+    });
+  }
+
+
+
+  async extractZipFile(zipPath, targetDir) {
+    return new Promise((resolve, reject) => {
+      console.log('Extracting ZIP archive:', zipPath);
+      console.log('Target directory:', targetDir);
+      
+      try {
+        // Hedef klasörü oluştur
+        fs.ensureDir(targetDir).then(() => {
+          // 7-Zip ile ayıklama (şifresiz)
+          const command = `7z x "${zipPath}" -o"${targetDir}"`;
+          
+          exec(command, (error, stdout, stderr) => {
+            if (error) {
+              console.log('7-Zip failed, trying WinRAR...');
+              
+              // WinRAR ile dene (şifresiz)
+              const winrarCommand = `winrar x "${zipPath}" "${targetDir}\\"`;
+              
+              exec(winrarCommand, (wrError, wrStdout, wrStderr) => {
+                if (wrError) {
+                  console.log('Both 7-Zip and WinRAR failed');
+                  reject(new Error('ZIP extraction failed'));
+                } else {
+                  console.log('WinRAR extraction successful');
+                  resolve();
+                }
+              });
+            } else {
+              console.log('7-Zip extraction successful');
+              resolve();
+            }
+          });
+        }).catch(error => {
+          reject(new Error(`Failed to create target directory: ${error.message}`));
+        });
+      } catch (error) {
+        reject(new Error(`ZIP extraction failed: ${error.message}`));
+      }
+    });
+  }
+
+
 }
 
 // App event handlers
