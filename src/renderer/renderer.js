@@ -110,7 +110,21 @@ class SteamLibraryUI {
                     this.onlinePassCurrentPage = 0;
                     this.renderOnlinePassGames();
                 } else {
-                    this.onlinePassFilteredGames = this.onlinePassGames.filter(game => game.name.toLowerCase().includes(query));
+                    // ID ve isim ile arama yap
+                    this.onlinePassFilteredGames = this.onlinePassGames.filter(gameId => {
+                        // ID ile arama
+                        if (gameId.toString().toLowerCase().includes(query)) {
+                            return true;
+                        }
+                        
+                        // İsim ile arama (önbellekten)
+                        if (this.onlinePassGameNames && this.onlinePassGameNames[gameId]) {
+                            const gameName = this.onlinePassGameNames[gameId].toLowerCase();
+                            return gameName.includes(query);
+                        }
+                        
+                        return false;
+                    });
                     this.onlinePassCurrentPage = 0;
                     this.renderOnlinePassGames();
                 }
@@ -129,7 +143,21 @@ class SteamLibraryUI {
                         this.onlinePassCurrentPage = 0;
                         this.renderOnlinePassGames();
                     } else {
-                        this.onlinePassFilteredGames = this.onlinePassGames.filter(game => game.name.toLowerCase().includes(query));
+                        // ID ve isim ile arama yap
+                        this.onlinePassFilteredGames = this.onlinePassGames.filter(gameId => {
+                            // ID ile arama
+                            if (gameId.toString().toLowerCase().includes(query)) {
+                                return true;
+                            }
+                            
+                            // İsim ile arama (önbellekten)
+                            if (this.onlinePassGameNames && this.onlinePassGameNames[gameId]) {
+                                const gameName = this.onlinePassGameNames[gameId].toLowerCase();
+                                return gameName.includes(query);
+                            }
+                            
+                            return false;
+                        });
                         this.onlinePassCurrentPage = 0;
                         this.renderOnlinePassGames();
                     }
@@ -416,16 +444,32 @@ class SteamLibraryUI {
         }
 
         // Oyun kartlarını paralel olarak oluştur
-        const cardPromises = this.gamesData.map(game => this.createGameCard(game));
+        const cardPromises = this.gamesData.map(async game => {
+            try {
+                return await this.createGameCard(game);
+            } catch (error) {
+                console.error('Game card creation failed:', error);
+                return null;
+            }
+        });
+        
         const cards = await Promise.all(cardPromises);
         
         cards.forEach(card => {
-            gamesGrid.appendChild(card);
+            if (card) {
+                gamesGrid.appendChild(card);
+            }
         });
     }
 
     // Oyun kartı oluşturulurken butonlara data-i18n ekle
     async createGameCard(game, isLibrary = false) {
+        // Game objesi kontrolü
+        if (!game || !game.appid || !game.name) {
+            console.error('Invalid game object:', game);
+            return null;
+        }
+        
         const card = document.createElement('div');
         card.className = 'game-card';
         card.addEventListener('click', () => this.showGameDetails(game));
@@ -1050,9 +1094,14 @@ class SteamLibraryUI {
     async loadLibrary() {
         try {
             this.libraryGames = await ipcRenderer.invoke('get-library-games');
+            if (!Array.isArray(this.libraryGames)) {
+                this.libraryGames = [];
+            }
             this.renderLibrary();
         } catch (error) {
             console.error('Failed to load library:', error);
+            this.libraryGames = [];
+            this.renderLibrary();
             this.showNotification('Hata', 'Kütüphane yüklenemedi', 'error');
         }
     }
@@ -1089,10 +1138,21 @@ class SteamLibraryUI {
             return;
         }
 
-        this.libraryGames.forEach(game => {
-            const gameCard = this.createGameCard(game, true); // kütüphane için ikinci parametre true
-            libraryGrid.appendChild(gameCard);
-        });
+        // Kütüphane oyunlarını asenkron olarak oluştur
+        const createLibraryCards = async () => {
+            for (const game of this.libraryGames) {
+                try {
+                    const gameCard = await this.createGameCard(game, true); // kütüphane için ikinci parametre true
+                    if (gameCard) {
+                        libraryGrid.appendChild(gameCard);
+                    }
+                } catch (error) {
+                    console.error('Game card creation failed:', error);
+                }
+            }
+        };
+        
+        createLibraryCards();
     }
 
     openSteamPage(appId) {
@@ -1245,6 +1305,14 @@ class SteamLibraryUI {
         const cc = this.countryCode || 'TR';
         const lang = this.getSelectedLang();
         const heroSection = document.getElementById('heroSection');
+        const currentPage = this.getCurrentPage();
+        
+        // Online Pass sayfasında arama
+        if (currentPage === 'onlinePass') {
+            this.handleOnlinePassSearch(query);
+            return;
+        }
+        
         if (!enterPressed && (!query || query.length < 2)) {
             this.loadGames();
             if (heroSection) heroSection.style.display = '';
@@ -2059,6 +2127,10 @@ class SteamLibraryUI {
             this.onlinePassGames = data.files;
             this.onlinePassFilteredGames = data.files;
             this.onlinePassCurrentPage = 0;
+            
+            // Oyun isimlerini önbellekle
+            await this.cacheOnlineGameNames();
+            
             this.renderOnlinePassGames();
         } catch (err) {
             onlineGrid.innerHTML = `<div style='color:#fff;padding:16px;'>Online oyunlar yüklenemedi: ${err.message}</div>`;
@@ -2522,6 +2594,64 @@ class SteamLibraryUI {
         
         this.selectedFile = null;
         this.setupManualInstallListeners();
+    }
+
+    // Online Pass arama fonksiyonu
+    handleOnlinePassSearch(query) {
+        if (!this.onlinePassGames) return;
+        
+        if (!query || query.trim() === '') {
+            // Arama boşsa tüm oyunları göster
+            this.onlinePassFilteredGames = this.onlinePassGames;
+        } else {
+            // Arama yap
+            const searchTerm = query.toLowerCase().trim();
+            this.onlinePassFilteredGames = this.onlinePassGames.filter(gameId => {
+                // ID ile arama
+                if (gameId.toString().includes(searchTerm)) {
+                    return true;
+                }
+                
+                // İsim ile arama (önbellekten)
+                if (this.onlinePassGameNames && this.onlinePassGameNames[gameId]) {
+                    const gameName = this.onlinePassGameNames[gameId].toLowerCase();
+                    return gameName.includes(searchTerm);
+                }
+                
+                return false;
+            });
+        }
+        
+        // Sayfa sıfırla ve yeniden render et
+        this.onlinePassCurrentPage = 0;
+        this.renderOnlinePassGames();
+    }
+
+    // Online oyun isimlerini önbellekle
+    async cacheOnlineGameNames() {
+        if (!this.onlinePassGames || this.onlinePassGameNames) return;
+        
+        this.onlinePassGameNames = {};
+        
+        // Tüm oyun isimlerini paralel olarak çek
+        const promises = this.onlinePassGames.map(async (gameId) => {
+            try {
+                const steamResponse = await fetch(`https://store.steampowered.com/api/appdetails?appids=${gameId}&l=turkish`);
+                const steamData = await steamResponse.json();
+                
+                if (steamData[gameId] && steamData[gameId].success && steamData[gameId].data) {
+                    const gameData = steamData[gameId].data;
+                    this.onlinePassGameNames[gameId] = gameData.name || `Oyun ID: ${gameId}`;
+                } else {
+                    this.onlinePassGameNames[gameId] = `Oyun ID: ${gameId}`;
+                }
+            } catch (error) {
+                console.error('Error caching game name:', error);
+                this.onlinePassGameNames[gameId] = `Oyun ID: ${gameId}`;
+            }
+        });
+        
+        await Promise.all(promises);
     }
 }
 
