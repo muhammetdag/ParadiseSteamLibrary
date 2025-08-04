@@ -66,7 +66,7 @@ npm run build
 
 ## 🔄 Son Güncellemeler
 
-### v1.0.1 - Online Sistem Güncellemesi
+### v2.0.0 - Online Sistem Güncellemesi
 
 #### ✅ Yeni Özellikler
 - **Steam API Entegrasyonu**: Online oyunlar için gerçek oyun isimleri
@@ -188,7 +188,7 @@ Bu proje MIT lisansı altında lisanslanmıştır. Detaylar için `LICENSE` dosy
 
 ## 👨‍💻 Geliştirici
 
-**Paradise Dev** - Modern Steam kütüphane yönetimi için geliştirilmiştir.
+**Muhammet Dağ** - Modern Steam kütüphane yönetimi için geliştirilmiştir.
 
 ---
 
