@@ -66,113 +66,37 @@ npm run build
 
 ## 🔄 Son Güncellemeler
 
-### v2.0.0 - Online Sistem Güncellemesi
+## [v2.0.1] - 04.08.2025
 
-#### ✅ Yeni Özellikler
-- **Steam API Entegrasyonu**: Online oyunlar için gerçek oyun isimleri
-- **Otomatik Görsel Sistemi**: Steam CDN'den otomatik görsel çekme
-- **Akıllı Hata Yönetimi**: API hatası durumunda yedek sistem
-- **Portable Build Desteği**: Taşınabilir exe dosyası oluşturma
+### 🐛 Bug Fixes
+- **OnlinePass Arama Sistemi**: Online Pass sayfasında oyun arama sorunu çözüldü
+  - Hem oyun ID'si hem oyun ismi ile arama yapılabilir
+  - Steam API'den oyun isimleri otomatik çekilir ve önbelleklenir
+  - Arama performansı iyileştirildi
+- **Kütüphane Bug'u**: Kütüphane yükleme ve görüntüleme sorunları düzeltildi
+  - `appendChild` hataları çözüldü
+  - Asenkron oyun kartı oluşturma iyileştirildi
+  - Null kontrolleri eklendi
 
-#### 🔧 Teknik İyileştirmeler
-- **API Güncellemesi**: Yeni online sistem API'leri
-- **Şifre Kaldırma**: ZIP ayıklama işlemlerinden şifre desteği kaldırıldı
-- **Performans Optimizasyonu**: Daha hızlı oyun yükleme
-- **Hata Düzeltmeleri**: Online liste yükleme sorunları çözüldü
+### ✨ New Features
+- **Gelişmiş Online Pass Arama**: 
+  - Çift arama sistemi (ID + İsim)
+  - Otomatik oyun ismi önbellekleme
+  - Paralel Steam API çağrıları
+  - Hızlı ve responsive arama
 
-#### 🎮 Online Oyun Sistemi
-```javascript
-// Yeni API Endpoints
-- Liste: https://muhammetdag.com/api/v1/online/online_fix_games.json
-- İndirme: https://muhammetdag.com/api/v1/online/index.php?appid=${appId}
+### 🔧 Technical Improvements
+- **Asenkron İşlemler**: Oyun kartı oluşturma işlemleri optimize edildi
+- **Hata Yönetimi**: Robust error handling eklendi
+- **Performans**: Online Pass sayfası yükleme hızı artırıldı
+
+### 📝 Examples
 ```
-
-#### 📱 Arayüz İyileştirmeleri
-- **Oyun Kartları**: Steam API'den gerçek oyun isimleri
-- **Görsel Sistemi**: Otomatik header görseli çekme
-- **Loading States**: Daha iyi yükleme göstergeleri
-- **Error Handling**: Kullanıcı dostu hata mesajları
-
-## 🛠️ Teknik Detaylar
-
-### Online Sistem Mimarisi
-```javascript
-// Online oyun kontrolü
-const gamesResponse = await axios.get('https://muhammetdag.com/api/v1/online/online_fix_games.json');
-const game = games.find(g => g.appid === parseInt(appId));
-
-// Steam API entegrasyonu
-const steamResponse = await fetch(`https://store.steampowered.com/api/appdetails?appids=${gameId}&l=turkish`);
+ID Arama: "240" → 2406770, 240760
+İsim Arama: "bodycam" → BODYCAM
+İsim Arama: "euro" → Euro Truck Simulator 2
+İsim Arama: "ready" → Ready or Not
 ```
-
-### ZIP Ayıklama Sistemi
-```javascript
-// Şifresiz ZIP ayıklama
-await this.extractZipFile(tempZipPath, targetDir);
-
-// Fallback sistem
-const targetFile = path.join(targetDir, `${game.name.replace(/[^a-zA-Z0-9]/g, '_')}.zip`);
-```
-
-### Portable Build Yapılandırması
-```json
-{
-  "target": "portable",
-  "arch": ["x64"]
-}
-```
-
-## 📁 Proje Yapısı
-
-```
-Paradise Steam Library Source/
-├── src/
-│   ├── main.js              # Ana Electron süreci
-│   ├── renderer/
-│   │   ├── index.html       # Ana arayüz
-│   │   ├── renderer.js      # Renderer süreci
-│   │   └── styles.css       # Stil dosyası
-│   ├── pdlogo.ico          # Uygulama ikonu
-│   └── pdlogo.png          # Logo
-├── package.json             # Proje yapılandırması
-├── package-lock.json        # Bağımlılık kilidi
-└── README.md               # Bu dosya
-```
-
-## 🚀 Build Komutları
-
-### Geliştirme
-```bash
-npm start          # Uygulamayı çalıştır
-npm run dev        # Geliştirme modu
-```
-
-### Build
-```bash
-npm run build-portable    # Portable exe
-npm run build-win         # Windows installer
-npm run build             # Tüm platformlar
-npm run pack              # Paketleme
-```
-
-## 🔧 Yapılandırma
-
-### Steam Path Ayarlama
-1. Uygulamayı açın
-2. Ayarlar sayfasına gidin
-3. Steam klasörünü seçin
-4. Değişiklikleri kaydedin
-
-### Discord RPC
-- Discord RPC otomatik olarak etkinleştirilir
-- Oyun durumunuz Discord'da görünür
-- Ayarlardan kapatabilirsiniz
-
-## 🐛 Bilinen Sorunlar
-
-- **Edge.js Bağımlılığı**: Windows'ta native modül derleme gerekebilir
-- **Steam API Limitleri**: Çok fazla istek atılırsa geçici bloklanma
-- **Antivirus Uyarıları**: Electron uygulamaları için yaygın
 
 ## 🤝 Katkıda Bulunma
 
