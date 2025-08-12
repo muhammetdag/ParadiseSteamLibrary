@@ -1,5 +1,64 @@
 const { ipcRenderer } = require('electron');
 
+// Güvenli Steam API çağrısı için yardımcı fonksiyon
+async function safeSteamFetch(url, options = {}) {
+    try {
+        const defaultOptions = {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            },
+            timeout: 10000,
+            ...options
+        };
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), defaultOptions.timeout);
+        
+        const response = await fetch(url, {
+            ...defaultOptions,
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        return response;
+    } catch (error) {
+        console.error('Steam API çağrısı hatası:', error);
+        throw error;
+    }
+}
+
+// Steam appdetails için güvenli JSON yardımcı fonksiyonu
+async function fetchSteamAppDetails(appid, cc, lang) {
+    try {
+        let url = `https://store.steampowered.com/api/appdetails?appids=${appid}&cc=${cc}&l=${lang}`;
+        let res = await safeSteamFetch(url, { timeout: 15000 });
+
+        // 403 ise TR/turkish ile bir kez daha dene
+        if (res.status === 403 && !(cc === 'TR' && lang === 'turkish')) {
+            await new Promise(r => setTimeout(r, 400));
+            res = await safeSteamFetch(`https://store.steampowered.com/api/appdetails?appids=${appid}&cc=TR&l=turkish`, { timeout: 15000 });
+        }
+
+        if (!res.ok) return null;
+
+        try {
+            const data = await res.json();
+            return data[appid]?.data || null;
+        } catch {
+            // HTML döndüyse JSON parse hatası olur
+            return null;
+        }
+    } catch {
+        return null;
+    }
+}
+
 class SteamLibraryUI {
     constructor() {
         this.currentPage = 'home';
@@ -11,12 +70,17 @@ class SteamLibraryUI {
         this.restartCountdown = null;
         this.searchTimeout = null;
         this.countryCode = null;
+        this.aiApiKey = 'API_KEY_HERE';
+        this.aiApiUrl = 'API_URL_HERE';
+        this.aiHistory = [];
         
         // Online Pass sayfalama değişkenleri
         this.onlinePassGames = [];
         this.onlinePassCurrentPage = 0;
         this.onlinePassGamesPerPage = 15;
         this.onlinePassFilteredGames = [];
+        
+        // Tüm Oyunlar ve filtre sistemi kaldırıldı
         
         this.init();
     }
@@ -29,6 +93,10 @@ class SteamLibraryUI {
         this.loadGames();
         this.loadLibrary();
         this.setupKeyboardShortcuts();
+        this.setupActiveUsersTracking();
+        
+        // Başlangıçta tüm modalleri kapat (güvenlik için)
+        this.closeAllModals();
     }
 
     async detectCountryCode() {
@@ -95,6 +163,11 @@ class SteamLibraryUI {
         document.querySelectorAll('.nav-tab').forEach(tab => {
             tab.addEventListener('click', () => {
                 this.switchCategory(tab.dataset.category);
+
+        // Aktif kullanıcı sayısı göstergesi
+        document.getElementById('activeUsersIndicator').addEventListener('click', () => {
+            this.refreshActiveUsersCount();
+        });
             });
         });
 
@@ -215,6 +288,8 @@ class SteamLibraryUI {
             this.loadMoreGames();
         });
 
+        // 'Daha fazla' yerine sayfalama kullanılacak; bu alan kaldırıldı
+
         // Settings toggles
         const discordToggle = document.getElementById('discordRPCToggle');
         if (discordToggle) discordToggle.addEventListener('change', (e) => {
@@ -255,6 +330,8 @@ class SteamLibraryUI {
             this.switchPage('library');
             bubbleMenu.classList.remove('active');
         });
+        const bubbleAllGames = document.getElementById('bubbleAllGames');
+        if (bubbleAllGames) bubbleAllGames.remove();
         document.getElementById('bubbleOnlinePass').addEventListener('click', () => {
             this.switchPage('onlinePass');
             bubbleMenu.classList.remove('active');
@@ -263,6 +340,9 @@ class SteamLibraryUI {
             this.switchPage('manualInstall');
             bubbleMenu.classList.remove('active');
         });
+
+        // AI Chat widget
+        this.setupAIChat();
 
 
 
@@ -280,6 +360,7 @@ class SteamLibraryUI {
                 this.updateTranslations();
             });
         });
+        
         // Sayfa ilk açıldığında da çevirileri uygula
         this.updateTranslations();
     }
@@ -325,9 +406,98 @@ class SteamLibraryUI {
         if (videoMutedToggle) videoMutedToggle.checked = this.config.videoMuted;
     }
 
+    // AI Chat: widget kurulumu
+    setupAIChat() {
+        const toggle = document.getElementById('aiChatToggle');
+        const widget = document.getElementById('aiChatWidget');
+        const closeBtn = document.getElementById('aiChatClose');
+        const clearBtn = document.getElementById('aiChatClear');
+        const messages = document.getElementById('aiChatMessages');
+        const textarea = document.getElementById('aiChatTextarea');
+        const sendBtn = document.getElementById('aiChatSend');
+
+        if (!toggle || !widget || !messages || !textarea || !sendBtn) return;
+
+        const show = () => { widget.classList.remove('hidden'); widget.setAttribute('aria-hidden', 'false'); textarea.focus(); };
+        const hide = () => { widget.classList.add('hidden'); widget.setAttribute('aria-hidden', 'true'); };
+        toggle.onclick = () => widget.classList.contains('hidden') ? show() : hide();
+        if (closeBtn) closeBtn.onclick = hide;
+        if (clearBtn) clearBtn.onclick = () => { messages.innerHTML = ''; };
+
+        const appendMsg = (role, text) => {
+            const row = document.createElement('div');
+            row.className = `ai-msg ${role}`;
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble';
+            bubble.textContent = text;
+            row.appendChild(bubble);
+            messages.appendChild(row);
+            messages.scrollTop = messages.scrollHeight;
+            this.aiHistory.push({ role, content: text });
+            if (this.aiHistory.length > 50) this.aiHistory.shift();
+        };
+
+        const send = async () => {
+            const content = textarea.value.trim();
+            if (!content) return;
+            appendMsg('user', content);
+            textarea.value = '';
+            try {
+                const reply = await this.callAI(content, this.aiHistory);
+                appendMsg('bot', reply || 'Cevap alınamadı.');
+            } catch (e) {
+                appendMsg('bot', 'Bir hata oluştu. Daha sonra tekrar deneyin.');
+            }
+        };
+
+        sendBtn.onclick = send;
+        textarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                send();
+            }
+        });
+    }
+
+    // AI Chat: API çağrısı
+    async callAI(message, history = []) {
+        try {
+            // Bazı sunucular, header casing ve CORS preflight için farklı davranabilir.
+            // Bu yüzden iki denemeli strateji uygula.
+            const makeReq = (headerName) => fetch(this.aiApiUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    [headerName]: this.aiApiKey,
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({
+                    // Sunucu tarafı 'question' alanını bekliyor
+                    question: message
+                })
+            });
+            // Yeni uç nokta için tek başlık adı yeterli
+            let res = await makeReq('X-API-Key');
+            // Yanıtı JSON olarak öncelikle dene, olmazsa metin olarak al
+            let data;
+            try {
+                data = await res.json();
+            } catch {
+                const text = await res.text();
+                data = { text };
+            }
+            // Esnek parse: {reply}, {message}, {text} gibi alanları dene
+            return data.answer || data.reply || data.message || data.text || '';
+        } catch (e) {
+            console.error('AI API hatası:', e);
+            return '';
+        }
+    }
+
     async checkSteamPath() {
         if (!this.config.steamPath) {
-            this.showModal('steamSetupModal');
+            // Steam yolu yoksa modal açmak yerine sadece bildirim göster
+            this.showNotification('Bilgi', 'Steam yolu ayarlanmamış. Ayarlar sayfasından Steam yolunu belirleyebilirsiniz.', 'info');
         }
     }
 
@@ -393,42 +563,267 @@ class SteamLibraryUI {
         this.loadGames();
     }
 
+    async loadAllGames() {
+        // Tüm Oyunlar sayfası için daha fazla oyun yükle
+        this.showLoading();
+        try {
+            const cc = this.countryCode || 'TR';
+            const lang = this.getSelectedLang();
+            
+            // Popüler oyunları Steam'den çek
+            const resultsUrl = `https://store.steampowered.com/search/results?sort_by=Reviews_DESC&category1=998&force_infinite=1&start=0&count=50&supportedlang=turkish&ndl=1&snr=1_7_7_151_7`;
+            
+            try {
+                console.log('Steam arama sonuçları alınıyor...');
+                const response = await fetch(resultsUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Connection': 'keep-alive',
+                        'Cache-Control': 'no-cache'
+                    },
+                    timeout: 20000
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const html = await response.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const rows = doc.querySelectorAll('.search_result_row');
+                
+                if (rows.length === 0) {
+                    throw new Error('Steam arama sonuçları bulunamadı');
+                }
+                
+                console.log(`${rows.length} oyun bulundu, detaylar alınıyor...`);
+                
+                // Her oyun için detay çek
+                const newGamesRaw = Array.from(rows).map(row => {
+                    const appid = row.getAttribute('data-ds-appid');
+                    const name = row.querySelector('.title')?.textContent?.trim() || '';
+                    return { appid, name };
+                }).filter(game => game.appid && game.name);
+                
+                // Her oyun için detaylı veri çek (hata yönetimi ile)
+                const games = await Promise.allSettled(newGamesRaw.slice(0, 50).map(async (game, index) => {
+                    try {
+                        console.log(`Oyun ${game.appid} detayları alınıyor...`);
+                        const gameData = await fetchSteamAppDetails(game.appid, cc, lang);
+                        
+                        if (!gameData || !gameData.name) {
+                            throw new Error('Oyun verisi bulunamadı');
+                        }
+                        
+                        console.log(`Oyun ${game.appid} başarıyla yüklendi: ${gameData.name}`);
+                        
+                        return {
+                            appid: game.appid,
+                            name: gameData.name,
+                            header_image: gameData.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${game.appid}/capsule_616x353.jpg`,
+                            price: gameData.price_overview ? gameData.price_overview : 0,
+                            price_overview: gameData.price_overview,
+                            discount_percent: gameData.price_overview ? gameData.price_overview.discount_percent : 0,
+                            platforms: gameData.platforms || {},
+                            coming_soon: gameData.release_date?.coming_soon || false,
+                            tags: [],
+                            genres: gameData.genres || [],
+                            short_description: gameData.short_description || '',
+                            reviews: gameData.recommendations ? 'Çok Olumlu' : '',
+                            metacritic: gameData.metacritic,
+                            release_date: gameData.release_date,
+                            is_dlc: false
+                        };
+                    } catch (error) {
+                        console.error(`Oyun ${game.appid} yüklenirken hata:`, error);
+                        // Fallback oyun verisi
+                        return {
+                            appid: game.appid,
+                            name: game.name || `Oyun ${game.appid}`,
+                            header_image: `https://cdn.akamai.steamstatic.com/steam/apps/${game.appid}/capsule_616x353.jpg`,
+                            price: 0,
+                            price_overview: null,
+                            discount_percent: 0,
+                            platforms: {},
+                            coming_soon: false,
+                            tags: [],
+                            genres: [],
+                            short_description: 'Oyun bilgileri yüklenemedi',
+                            reviews: '',
+                            metacritic: null,
+                            release_date: null,
+                            is_dlc: false
+                        };
+                    }
+                }));
+                
+                // Başarılı olan oyunları filtrele
+                this.gamesData = games
+                    .filter(result => result.status === 'fulfilled' && result.value)
+                    .map(result => result.value);
+                
+                this.filteredAllGames = [...this.gamesData];
+                
+                if (this.gamesData.length > 0) {
+                    console.log(`${this.gamesData.length} oyun başarıyla yüklendi`);
+                    this.sortAllGames();
+                    this.renderFilteredAllGames();
+                    this.updateAllGamesFilterResults();
+                } else {
+                    throw new Error('Hiç oyun yüklenemedi');
+                }
+                
+            } catch (searchError) {
+                console.error('Steam arama hatası:', searchError);
+                throw new Error('Steam arama sonuçları alınamadı');
+            }
+            
+        } catch (error) {
+            console.error('Tüm oyunlar yüklenirken genel hata:', error);
+            
+            // Hata durumunda fallback oyunları göster
+            const fallbackAppIds = [1436990,2300230,2255360,2418490,2358720,2749880,1593500,3181470,1941540,1174180];
+            this.gamesData = fallbackAppIds.map(appid => ({
+                appid: appid,
+                name: `Oyun ${appid}`,
+                header_image: `https://cdn.akamai.steamstatic.com/steam/apps/${appid}/capsule_616x353.jpg`,
+                price: 0,
+                price_overview: null,
+                discount_percent: 0,
+                platforms: {},
+                coming_soon: false,
+                tags: [],
+                genres: [],
+                short_description: 'Oyun bilgileri yüklenemedi',
+                reviews: '',
+                metacritic: null,
+                release_date: null,
+                is_dlc: false
+            }));
+            
+            this.filteredAllGames = [...this.gamesData];
+            this.renderFilteredAllGames();
+            this.updateAllGamesFilterResults();
+            
+            this.showNotification('Uyarı', 'Bazı oyun bilgileri yüklenemedi. Temel bilgiler gösteriliyor.', 'warning');
+        } finally {
+            this.hideLoading();
+        }
+    }
+
     // Kategori sistemi kaldırıldı, ana sayfa sadece belirli oyunları gösterir
     async loadGames() {
-        let featuredAppIds = [1436990,2300230,2255360,2418490,2731550,2749880,2547320,3181470,1114860];
+        let featuredAppIds = [1436990,2300230,2255360,2418490,2358720,2749880,1593500,3181470,1941540,1174180];
         for (let i = featuredAppIds.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [featuredAppIds[i], featuredAppIds[j]] = [featuredAppIds[j], featuredAppIds[i]];
         }
-                this.showLoading();
-                try {
+        
+        this.showLoading();
+        try {
             const cc = this.countryCode || 'TR';
             const lang = this.getSelectedLang();
-            const games = await Promise.all(featuredAppIds.slice(0, 9).map(async appid => {
-                const res = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appid}&cc=${cc}&l=${lang}`);
-                const data = await res.json();
-                const gameData = data[appid]?.data;
-                if (!gameData) return null;
-                return {
-                    appid: appid,
-                    name: gameData.name,
-                    header_image: gameData.header_image,
-                    price: gameData.price_overview ? gameData.price_overview : 0,
-                    discount_percent: gameData.price_overview ? gameData.price_overview.discount_percent : 0,
-                    platforms: gameData.platforms,
-                    coming_soon: gameData.release_date?.coming_soon,
-                    tags: [],
-                    short_description: gameData.short_description,
-                    reviews: gameData.recommendations ? 'Çok Olumlu' : '',
-                    is_dlc: false
-                };
+            
+            // Önce basit oyun verilerini yükle (fallback için)
+            const fallbackGames = featuredAppIds.slice(0, 10).map(appid => ({
+                appid: appid,
+                name: `Oyun ${appid}`,
+                header_image: `https://cdn.akamai.steamstatic.com/steam/apps/${appid}/capsule_616x353.jpg`,
+                price: 0,
+                price_overview: null,
+                discount_percent: 0,
+                platforms: {},
+                coming_soon: false,
+                tags: [],
+                genres: [],
+                short_description: 'Oyun bilgileri yükleniyor...',
+                reviews: '',
+                metacritic: null,
+                is_dlc: false
             }));
-            this.gamesData = games.filter(Boolean);
+            
+            // Hata yönetimi ile oyun yükleme
+            const games = await Promise.allSettled(featuredAppIds.slice(0, 9).map(async (appid, index) => {
+                try {
+                    console.log(`Oyun ${appid} yükleniyor...`);
+                    const gameData = await fetchSteamAppDetails(appid, cc, lang);
+                    
+                    if (!gameData || !gameData.name) {
+                        throw new Error('Oyun verisi bulunamadı');
+                    }
+                    
+                    console.log(`Oyun ${appid} başarıyla yüklendi: ${gameData.name}`);
+                    
+                    return {
+                        appid: appid,
+                        name: gameData.name,
+                        header_image: gameData.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${appid}/capsule_616x353.jpg`,
+                        price: gameData.price_overview ? gameData.price_overview : 0,
+                        price_overview: gameData.price_overview,
+                        discount_percent: gameData.price_overview ? gameData.price_overview.discount_percent : 0,
+                        platforms: gameData.platforms || {},
+                        coming_soon: gameData.release_date?.coming_soon || false,
+                        tags: [],
+                        genres: gameData.genres || [],
+                        short_description: gameData.short_description || '',
+                        reviews: gameData.recommendations ? 'Çok Olumlu' : '',
+                        metacritic: gameData.metacritic,
+                        is_dlc: false
+                    };
+                } catch (error) {
+                    console.warn(`Oyun ${appid} yüklenirken hata:`, error?.message || error);
+                    // Fallback oyun verisi döndür
+                    return fallbackGames[index];
+                }
+            }));
+            
+            // Başarılı olan oyunları filtrele
+            this.gamesData = games
+                .filter(result => result.status === 'fulfilled' && result.value)
+                .map(result => result.value);
+            
+            this.filteredAllGames = [...this.gamesData];
+            
+            // En az bir oyun yüklendiyse devam et
+            if (this.gamesData.length > 0) {
+                await this.renderGames();
+                this.updateHeroSection();
+                console.log(`${this.gamesData.length} oyun başarıyla yüklendi`);
+            } else {
+                throw new Error('Hiç oyun yüklenemedi');
+            }
+            
+        } catch (error) {
+            console.error('Oyunlar yüklenirken genel hata:', error);
+            
+            // Hata durumunda fallback oyunları göster
+            this.gamesData = featuredAppIds.slice(0, 9).map(appid => ({
+                appid: appid,
+                name: `Oyun ${appid}`,
+                header_image: `https://cdn.akamai.steamstatic.com/steam/apps/${appid}/capsule_616x353.jpg`,
+                price: 0,
+                price_overview: null,
+                discount_percent: 0,
+                platforms: {},
+                coming_soon: false,
+                tags: [],
+                genres: [],
+                short_description: 'Oyun bilgileri yüklenemedi',
+                reviews: '',
+                metacritic: null,
+                is_dlc: false
+            }));
+            
+            this.filteredAllGames = [...this.gamesData];
             await this.renderGames();
             this.updateHeroSection();
-        } catch (error) {
-            console.error('Failed to load games:', error);
-            this.showNotification('Hata', 'Oyunlar yüklenemedi', 'error');
+            
+            this.showNotification('Uyarı', 'Bazı oyun bilgileri yüklenemedi. Temel bilgiler gösteriliyor.', 'warning');
         } finally {
             this.hideLoading();
         }
@@ -439,7 +834,19 @@ class SteamLibraryUI {
         gamesGrid.innerHTML = '';
 
         if (this.gamesData.length === 0) {
-            gamesGrid.innerHTML = '<div class="no-games">Hiç oyun bulunamadı</div>';
+            gamesGrid.innerHTML = `
+                <div class="no-games" style="grid-column: 1 / -1; text-align: center; padding: 40px; color: var(--text-secondary);">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-bottom: 16px;">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="m21 21-4.35-4.35"/>
+                    </svg>
+                    <h3>Hiç oyun bulunamadı</h3>
+                    <p>Oyunlar yüklenirken bir hata oluştu. Lütfen sayfayı yenileyin.</p>
+                    <button onclick="location.reload()" style="margin-top: 16px; padding: 8px 16px; background: var(--accent-primary); color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        Sayfayı Yenile
+                    </button>
+                </div>
+            `;
             return;
         }
 
@@ -449,7 +856,25 @@ class SteamLibraryUI {
                 return await this.createGameCard(game);
             } catch (error) {
                 console.error('Game card creation failed:', error);
-                return null;
+                // Hata durumunda basit bir kart oluştur
+                const fallbackCard = document.createElement('div');
+                fallbackCard.className = 'game-card';
+                fallbackCard.innerHTML = `
+                    <img src="${game.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${game.appid}/header.jpg`}" alt="${game.name}" class="game-image" loading="lazy" style="width:100%;height:180px;object-fit:cover;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.18);" onerror="this.src='https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok'">
+                    <div class="game-info">
+                        <h3 class="game-title" style="font-size:18px;font-weight:700;margin-bottom:4px;">${game.name}</h3>
+                        <div class="game-meta" style="margin-bottom:6px;">
+                            <span class="game-price" style="font-size:16px;font-weight:600;">Ücretsiz</span>
+                        </div>
+                        <div class="game-tags"></div>
+                        <div class="game-actions">
+                            <button class="game-btn primary" onclick="event.stopPropagation(); ui.addGameToLibrary(${game.appid})">Kütüphaneme Ekle</button>
+                            <button class="game-btn secondary" onclick="event.stopPropagation(); ui.openSteamPage(${game.appid})">Steam Sayfası</button>
+                        </div>
+                    </div>
+                `;
+                fallbackCard.addEventListener('click', () => this.showGameDetails(game));
+                return fallbackCard;
             }
         });
         
@@ -479,6 +904,11 @@ class SteamLibraryUI {
         if (!imageUrl && game.appid) {
             imageUrl = await this.getGameImageUrl(game.appid, game.name);
         }
+        
+        // Fallback görsel URL'si
+        if (!imageUrl) {
+            imageUrl = `https://cdn.akamai.steamstatic.com/steam/apps/${game.appid}/capsule_616x353.jpg`;
+        }
 
         const tagsHtml = game.tags ? game.tags.map(tag => 
             `<span class="game-tag" style="background-color: ${tag.color}">${tag.name}</span>`
@@ -504,18 +934,23 @@ class SteamLibraryUI {
         let priceHtml = '';
         if (!isLibrary) {
             let priceText = '';
-            if (!game.price || game.price === 0 || game.price === '0') {
-                priceText = this.translate('free');
-            } else {
-                // Para birimi ve sayı formatı
-                let symbol = '₺';
-                if (typeof game.price === 'object' && game.price.currency) {
-                    const currency = game.price.currency;
-                    symbol = currency === 'TRY' ? '₺' : (currency === 'USD' ? '$' : (currency === 'EUR' ? '€' : currency));
-                    priceText = `${symbol}${(game.price.final / 100).toLocaleString(this.getSelectedLang(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            try {
+                if (!game.price || game.price === 0 || game.price === '0') {
+                    priceText = this.translate('free');
                 } else {
-                    priceText = `${symbol}${(game.price / 100).toLocaleString(this.getSelectedLang(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                    // Para birimi ve sayı formatı
+                    let symbol = '₺';
+                    if (typeof game.price === 'object' && game.price.currency) {
+                        const currency = game.price.currency;
+                        symbol = currency === 'TRY' ? '₺' : (currency === 'USD' ? '$' : (currency === 'EUR' ? '€' : currency));
+                        priceText = `${symbol}${(game.price.final / 100).toLocaleString(this.getSelectedLang(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                    } else {
+                        priceText = `${symbol}${(game.price / 100).toLocaleString(this.getSelectedLang(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                    }
                 }
+            } catch (error) {
+                console.error('Fiyat formatı hatası:', error);
+                priceText = this.translate('free');
             }
             priceHtml = `<span class="game-price" style="font-size:16px;font-weight:600;">${priceText}</span>`;
             if (game.discount_percent > 0) {
@@ -524,7 +959,7 @@ class SteamLibraryUI {
         }
 
         card.innerHTML = `
-            <img src="${imageUrl}" alt="${game.name}" class="game-image" loading="lazy" style="width:100%;height:180px;object-fit:cover;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.18);">
+            <img src="${imageUrl}" alt="${game.name}" class="game-image" loading="lazy" style="width:100%;height:180px;object-fit:cover;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.18);" onerror="this.src='https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok'">
             <div class="game-info">
                 <h3 class="game-title" style="font-size:18px;font-weight:700;margin-bottom:4px;">${game.name}</h3>
                 <div class="game-meta" style="margin-bottom:6px;">
@@ -580,6 +1015,9 @@ class SteamLibraryUI {
             if (heroPrice) heroPrice.textContent = priceText;
         if (featuredGame.header_image) {
             heroBackground.style.backgroundImage = `url(${featuredGame.header_image})`;
+        } else if (featuredGame.appid) {
+            const fallbackImage = await this.getGameImageUrl(featuredGame.appid, featuredGame.name);
+            heroBackground.style.backgroundImage = `url(${fallbackImage})`;
         }
             // Butonlar
             const viewBtn = document.getElementById('heroViewBtn');
@@ -772,7 +1210,7 @@ class SteamLibraryUI {
                 try {
                     const sl = 'en'; // varsayılan kaynak dil
                     const tl = selectedLang;
-                    const translateRes = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(fallbackDesc)}`);
+                    const translateRes = await safeSteamFetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(fallbackDesc)}`);
                     const translateData = await translateRes.json();
                     const translated = translateData[0]?.map(part => part[0]).join(' ');
                     if (/<[a-z][\s\S]*>/i.test(translated)) {
@@ -806,7 +1244,7 @@ class SteamLibraryUI {
             try {
                 const sl = 'en'; // varsayılan kaynak dil
                 const tl = selectedLang;
-                const translateRes = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(reviewText)}`);
+                const translateRes = await safeSteamFetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(reviewText)}`);
                 const translateData = await translateRes.json();
                 const translated = translateData[0]?.map(part => part[0]).join(' ');
                 reviewsContainer.textContent = translated;
@@ -959,7 +1397,7 @@ class SteamLibraryUI {
                     try {
                         const sl = 'en';
                         const tl = lang;
-                        const translateRes = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(dlc.name)}`);
+                        const translateRes = await safeSteamFetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(dlc.name)}`);
                         const translateData = await translateRes.json();
                         title = translateData[0]?.map(part => part[0]).join(' ');
                     } catch {}
@@ -968,7 +1406,7 @@ class SteamLibraryUI {
                     try {
                         const sl = 'en';
                         const tl = lang;
-                        const translateRes = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(dlc.short_description || dlc.name)}`);
+                        const translateRes = await safeSteamFetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(dlc.short_description || dlc.name)}`);
                         const translateData = await translateRes.json();
                         desc = translateData[0]?.map(part => part[0]).join(' ');
                     } catch {}
@@ -1167,7 +1605,7 @@ class SteamLibraryUI {
             // Popüler oyunları Steam'den çek
             const offset = this.gamesData.length;
             const resultsUrl = `https://store.steampowered.com/search/results?sort_by=Reviews_DESC&category1=998&force_infinite=1&start=${offset}&count=11&supportedlang=turkish&ndl=1&snr=1_7_7_151_7`;
-            const html = await (await fetch(resultsUrl)).text();
+            const html = await (await safeSteamFetch(resultsUrl)).text();
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
             const rows = doc.querySelectorAll('.search_result_row');
@@ -1183,9 +1621,7 @@ class SteamLibraryUI {
             // Her oyun için detaylı veri çek
             const newGames = await Promise.all(filteredGames.slice(0, 11).map(async g => {
                 try {
-                    const res = await fetch(`https://store.steampowered.com/api/appdetails?appids=${g.appid}&cc=${cc}&l=${lang}`);
-                    const data = await res.json();
-                    const gameData = data[g.appid]?.data;
+                    const gameData = await fetchSteamAppDetails(g.appid, cc, lang);
                     if (!gameData) return null;
                     return {
                         appid: g.appid,
@@ -1207,6 +1643,67 @@ class SteamLibraryUI {
             this.gamesData = this.gamesData.concat(newGames.filter(Boolean));
             this.renderGames();
             this.updateHeroSection();
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    async loadMoreAllGames() {
+        const cc = this.countryCode || 'TR';
+        const lang = this.getSelectedLang();
+        this.showLoading();
+        try {
+            // Popüler oyunları Steam'den çek
+            const offset = this.gamesData.length;
+            const resultsUrl = `https://store.steampowered.com/search/results?sort_by=Reviews_DESC&category1=998&force_infinite=1&start=${offset}&count=20&supportedlang=turkish&ndl=1&snr=1_7_7_151_7`;
+            const html = await (await safeSteamFetch(resultsUrl)).text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const rows = doc.querySelectorAll('.search_result_row');
+            // Her oyun için detay çek
+            const newGamesRaw = Array.from(rows).map(row => {
+                const appid = row.getAttribute('data-ds-appid');
+                const name = row.querySelector('.title')?.textContent?.trim() || '';
+                return { appid, name };
+            });
+            // Aynı oyun tekrar eklenmesin
+            const existingAppIds = new Set(this.gamesData.map(g => String(g.appid)));
+            const filteredGames = newGamesRaw.filter(g => !existingAppIds.has(String(g.appid)));
+            // Her oyun için detaylı veri çek
+            const newGames = await Promise.all(filteredGames.slice(0, 20).map(async g => {
+                try {
+                    const gameData = await fetchSteamAppDetails(g.appid, cc, lang);
+                    if (!gameData) return null;
+                    return {
+                        appid: g.appid,
+                        name: gameData.name,
+                        header_image: gameData.header_image,
+                        price: gameData.price_overview ? gameData.price_overview : 0,
+                        price_overview: gameData.price_overview,
+                        discount_percent: gameData.price_overview ? gameData.price_overview.discount_percent : 0,
+                        platforms: gameData.platforms,
+                        coming_soon: gameData.release_date?.coming_soon,
+                        tags: [],
+                        genres: gameData.genres || [],
+                        short_description: gameData.short_description,
+                        reviews: gameData.recommendations ? 'Çok Olumlu' : '',
+                        metacritic: gameData.metacritic,
+                        release_date: gameData.release_date,
+                        is_dlc: false
+                    };
+                } catch (error) {
+                    console.error(`Failed to load game ${g.appid}:`, error);
+                    return null;
+                }
+            }));
+            this.gamesData = this.gamesData.concat(newGames.filter(Boolean));
+            this.filteredAllGames = [...this.gamesData];
+            this.sortAllGames();
+            this.renderFilteredAllGames();
+            this.updateAllGamesFilterResults();
+        } catch (error) {
+            console.error('Failed to load more all games:', error);
+            this.showNotification('Hata', 'Oyunlar yüklenemedi', 'error');
         } finally {
             this.hideLoading();
         }
@@ -1281,6 +1778,28 @@ class SteamLibraryUI {
         // Steam'de oyunu başlat
         ipcRenderer.invoke('open-external', `steam://run/${appId}`);
         this.showNotification('success', 'Oyun Steam üzerinden başlatılıyor...', 'success');
+    }
+
+    async getGameImageUrl(appId, gameName) {
+        try {
+            // Öncelik: header.jpg
+            const candidates = [
+                `https://cdn.akamai.steamstatic.com/steam/apps/${appId}/header.jpg`,
+                `https://cdn.akamai.steamstatic.com/steam/apps/${appId}/capsule_616x353.jpg`,
+                `https://cdn.akamai.steamstatic.com/steam/apps/${appId}/library_600x900.jpg`,
+                `https://cdn.akamai.steamstatic.com/steam/apps/${appId}/library_hero.jpg`
+            ];
+
+            for (const url of candidates) {
+                try {
+                    const resp = await fetch(url, { method: 'HEAD' });
+                    if (resp.ok) return url;
+                } catch {}
+            }
+            return 'https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok';
+        } catch {
+            return 'https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok';
+        }
     }
 
     async deleteGame(appId) {
@@ -1450,206 +1969,221 @@ class SteamLibraryUI {
         const lang = this.getSelectedLang();
         const dict = {
             'library': {
-                tr: 'Kütüphanem', en: 'Library', de: 'Bibliothek', fr: 'Bibliothèque', es: 'Biblioteca', ru: 'Библиотека', zh: '库', ja: 'ライブラリ', it: 'Libreria', pt: 'Biblioteca', ko: '라이브러리', ar: 'المكتبة'
+                tr: 'Kütüphanem', en: 'Library', de: 'Bibliothek', fr: 'Bibliothèque', es: 'Biblioteca', ru: 'Библиотека', zh: '库', ja: 'ライブラリ', it: 'Libreria', pt: 'Biblioteca', ko: '라이브러리', ar: 'المكتبة', az: 'Kitabxanam'
             },
             'settings': {
-                tr: 'Ayarlar', en: 'Settings', de: 'Einstellungen', fr: 'Paramètres', es: 'Configuración', ru: 'Настройки', zh: '设置', ja: '設定', it: 'Impostazioni', pt: 'Configurações', ko: '설정', ar: 'الإعدادات'
+                tr: 'Ayarlar', en: 'Settings', de: 'Einstellungen', fr: 'Paramètres', es: 'Configuración', ru: 'Настройки', zh: '设置', ja: '設定', it: 'Impostazioni', pt: 'Configurações', ko: '설정', ar: 'الإعدادات', az: 'Parametrlər'
+            },
+            'online_pass': {
+                tr: 'Online Pass', en: 'Online Pass', de: 'Online Pass', fr: 'Online Pass', es: 'Online Pass', ru: 'Online Pass', zh: '在线通行证', ja: 'オンラインパス', it: 'Online Pass', pt: 'Online Pass', ko: '온라인 패스', ar: 'المرور الإلكتروني', az: 'Onlayn Pas'
+            },
+            'online_add': {
+                tr: 'Online Ekle', en: 'Add Online', de: 'Online hinzufügen', fr: 'Ajouter en ligne', es: 'Añadir en línea', ru: 'Добавить онлайн', zh: '在线添加', ja: 'オンライン追加', it: 'Aggiungi online', pt: 'Adicionar online', ko: '온라인 추가', ar: 'إضافة عبر الإنترنت', az: 'Onlayn Əlavə Et'
+            },
+            'game_id': {
+                tr: 'Oyun ID', en: 'Game ID', de: 'Spiel-ID', fr: 'ID du jeu', es: 'ID del juego', ru: 'ID игры', zh: '游戏ID', ja: 'ゲームID', it: 'ID gioco', pt: 'ID do jogo', ko: '게임 ID', ar: 'معرف اللعبة', az: 'Oyun ID'
+            },
+            'online_games_loading': {
+                tr: 'Yükleniyor...', en: 'Loading...', de: 'Lädt...', fr: 'Chargement...', es: 'Cargando...', ru: 'Загрузка...', zh: '加载中...', ja: '読み込み中...', it: 'Caricamento...', pt: 'Carregando...', ko: '로딩 중...', ar: 'جاري التحميل...', az: 'Yüklənir...'
+            },
+            'online_games_load_failed': {
+                tr: 'Online oyunlar yüklenemedi', en: 'Failed to load online games', de: 'Online Spiele konnten nicht geladen werden', fr: 'Échec du chargement des jeux en ligne', es: 'No se pudieron cargar los juegos en línea', ru: 'Не удалось загрузить онлайн игры', zh: '无法加载在线游戏', ja: 'オンラインゲームの読み込みに失敗しました', it: 'Impossibile caricare i giochi online', pt: 'Falha ao carregar jogos online', ko: '온라인 게임 로딩 실패', ar: 'فشل في تحميل الألعاب الإلكترونية', az: 'Onlayn oyunlar yüklənə bilmədi'
             },
             'search_placeholder': {
-                tr: 'Oyun ara...', en: 'Search game...', de: 'Spiel suchen...', fr: 'Rechercher un jeu...', es: 'Buscar juego...', ru: 'Поиск игры...', zh: '搜索游戏...', ja: 'ゲーム検索...', it: 'Cerca gioco...', pt: 'Buscar jogo...', ko: '게임 검색...', ar: 'ابحث عن لعبة...'
+                tr: 'Oyun ara...', en: 'Search game...', de: 'Spiel suchen...', fr: 'Rechercher un jeu...', es: 'Buscar juego...', ru: 'Поиск игры...', zh: '搜索游戏...', ja: 'ゲーム検索...', it: 'Cerca gioco...', pt: 'Buscar jogo...', ko: '게임 검색...', ar: 'ابحث عن لعبة...', az: 'Oyun axtar...'
             },
             'add_to_library': {
-                tr: 'Kütüphaneme Ekle', en: 'Add to Library', de: 'Zur Bibliothek', fr: 'Ajouter à la bibliothèque', es: 'Añadir a la biblioteca', ru: 'Добавить в библиотеку', zh: '添加到库', ja: 'ライブラリに追加', it: 'Aggiungi alla libreria', pt: 'Adicionar à biblioteca', ko: '라이브러리에 추가', ar: 'أضف إلى المكتبة'
+                tr: 'Kütüphaneme Ekle', en: 'Add to Library', de: 'Zur Bibliothek', fr: 'Ajouter à la bibliothèque', es: 'Añadir a la biblioteca', ru: 'Добавить в библиотеку', zh: '添加到库', ja: 'ライブラリに追加', it: 'Aggiungi alla libreria', pt: 'Adicionar à biblioteca', ko: '라이브러리에 추가', ar: 'أضف إلى المكتبة', az: 'Kitabxanaya əlavə et'
             },
             'already_in_library': {
-                tr: 'Zaten Sahipsiniz', en: 'Already Owned', de: 'Bereits vorhanden', fr: 'Déjà possédé', es: 'Ya en tu biblioteca', ru: 'Уже есть', zh: '已拥有', ja: 'すでに所有', it: 'Già posseduto', pt: 'Já possui', ko: '이미 보유', ar: 'موجود بالفعل'
+                tr: 'Zaten Sahipsiniz', en: 'Already Owned', de: 'Bereits vorhanden', fr: 'Déjà possédé', es: 'Ya en tu biblioteca', ru: 'Уже есть', zh: '已拥有', ja: 'すでに所有', it: 'Già posseduto', pt: 'Já possui', ko: '이미 보유', ar: 'موجود بالفعل', az: 'Artıq sahibsiniz'
             },
             'launch_game': {
-                tr: 'Oyunu Başlat', en: 'Launch Game', de: 'Spiel starten', fr: 'Lancer le jeu', es: 'Iniciar juego', ru: 'Запустить игру', zh: '启动游戏', ja: 'ゲーム開始', it: 'Avvia gioco', pt: 'Iniciar jogo', ko: '게임 시작', ar: 'تشغيل اللعبة'
+                tr: 'Oyunu Başlat', en: 'Launch Game', de: 'Spiel starten', fr: 'Lancer le jeu', es: 'Iniciar juego', ru: 'Запустить игру', zh: '启动游戏', ja: 'ゲーム開始', it: 'Avvia gioco', pt: 'Iniciar jogo', ko: '게임 시작', ar: 'تشغيل اللعبة', az: 'Oyunu başlat'
             },
             'delete_game': {
-                tr: 'Oyunu Sil', en: 'Delete Game', de: 'Spiel löschen', fr: 'Supprimer le jeu', es: 'Eliminar juego', ru: 'Удалить игру', zh: '删除游戏', ja: 'ゲーム削除', it: 'Elimina gioco', pt: 'Excluir jogo', ko: '게임 삭제', ar: 'حذف اللعبة'
+                tr: 'Oyunu Sil', en: 'Delete Game', de: 'Spiel löschen', fr: 'Supprimer le jeu', es: 'Eliminar juego', ru: 'Удалить игру', zh: '删除游戏', ja: 'ゲーム削除', it: 'Elimina gioco', pt: 'Excluir jogo', ko: '게임 삭제', ar: 'حذف اللعبة', az: 'Oyunu sil'
             },
             'view_details': {
-                tr: 'Detayları Görüntüle', en: 'View Details', de: 'Details anzeigen', fr: 'Voir les détails', es: 'Ver detalles', ru: 'Подробнее', zh: '查看详情', ja: '詳細を見る', it: 'Vedi dettagli', pt: 'Ver detalhes', ko: '상세 보기', ar: 'عرض التفاصيل'
+                tr: 'Detayları Görüntüle', en: 'View Details', de: 'Details anzeigen', fr: 'Voir les détails', es: 'Ver detalles', ru: 'Подробнее', zh: '查看详情', ja: '詳細を見る', it: 'Vedi dettagli', pt: 'Ver detalhes', ko: '상세 보기', ar: 'عرض التفاصيل', az: 'Təfərrüatları göstər'
             },
             'free': {
-                tr: 'Ücretsiz', en: 'Free', de: 'Kostenlos', fr: 'Gratuit', es: 'Gratis', ru: 'Бесплатно', zh: '免费', ja: '無料', it: 'Gratis', pt: 'Grátis', ko: '무료', ar: 'مجاني'
+                tr: 'Ücretsiz', en: 'Free', de: 'Kostenlos', fr: 'Gratuit', es: 'Gratis', ru: 'Бесплатно', zh: '免费', ja: '無料', it: 'Gratis', pt: 'Grátis', ko: '무료', ar: 'مجاني', az: 'Pulsuz'
             },
             'discount': {
-                tr: 'İndirim', en: 'Discount', de: 'Rabatt', fr: 'Remise', es: 'Descuento', ru: 'Скидка', zh: '折扣', ja: '割引', it: 'Sconto', pt: 'Desconto', ko: '할인', ar: 'خصم'
+                tr: 'İndirim', en: 'Discount', de: 'Rabatt', fr: 'Remise', es: 'Descuento', ru: 'Скидка', zh: '折扣', ja: '割引', it: 'Sconto', pt: 'Desconto', ko: '할인', ar: 'خصم', az: 'Endirim'
             },
             'game_not_found': {
-                tr: 'Oyun bulunamadı', en: 'Game not found', de: 'Spiel nicht gefunden', fr: 'Jeu introuvable', es: 'Juego no encontrado', ru: 'Игра не найдена', zh: '未找到游戏', ja: 'ゲームが見つかりません', it: 'Gioco non trovato', pt: 'Jogo não encontrado', ko: '게임을 찾을 수 없음', ar: 'اللعبة غير موجودة'
+                tr: 'Oyun bulunamadı', en: 'Game not found', de: 'Spiel nicht gefunden', fr: 'Jeu introuvable', es: 'Juego no encontrado', ru: 'Игра не найдена', zh: '未找到游戏', ja: 'ゲームが見つかりません', it: 'Gioco non trovato', pt: 'Jogo não encontrado', ko: '게임을 찾을 수 없음', ar: 'اللعبة غير موجودة', az: 'Oyun tapılmadı'
             },
             'success': {
-                tr: 'Başarılı', en: 'Success', de: 'Erfolg', fr: 'Succès', es: 'Éxito', ru: 'Успешно', zh: '成功', ja: '成功', it: 'Successo', pt: 'Sucesso', ko: '성공', ar: 'نجاح'
+                tr: 'Başarılı', en: 'Success', de: 'Erfolg', fr: 'Succès', es: 'Éxito', ru: 'Успешно', zh: '成功', ja: '成功', it: 'Successo', pt: 'Sucesso', ko: '성공', ar: 'نجاح', az: 'Uğurlu'
             },
             'error': {
-                tr: 'Hata', en: 'Error', de: 'Fehler', fr: 'Erreur', es: 'Error', ru: 'Ошибка', zh: '错误', ja: 'エラー', it: 'Errore', pt: 'Erro', ko: '오류', ar: 'خطأ'
+                tr: 'Hata', en: 'Error', de: 'Fehler', fr: 'Erreur', es: 'Error', ru: 'Ошибка', zh: '错误', ja: 'エラー', it: 'Errore', pt: 'Erro', ko: '오류', ar: 'خطأ', az: 'Xəta'
             },
             'game_added': {
-                tr: 'Oyun kütüphanene eklendi', en: 'Game added to your library', de: 'Spiel zur Bibliothek hinzugefügt', fr: 'Jeu ajouté à votre bibliothèque', es: 'Juego añadido a tu biblioteca', ru: 'Игра добавлена в библиотеку', zh: '已添加到库', ja: 'ライブラリに追加されました', it: 'Gioco aggiunto alla libreria', pt: 'Jogo adicionado à biblioteca', ko: '라이브러리에 추가됨', ar: 'تمت إضافة اللعبة إلى مكتبتك'
+                tr: 'Oyun kütüphanene eklendi', en: 'Game added to your library', de: 'Spiel zur Bibliothek hinzugefügt', fr: 'Jeu ajouté à votre bibliothèque', es: 'Juego añadido a tu biblioteca', ru: 'Игра добавлена в библиотеку', zh: '已添加到库', ja: 'ライブラリに追加されました', it: 'Gioco aggiunto alla libreria', pt: 'Jogo adicionado à biblioteca', ko: '라이브러리에 추가됨', ar: 'تمت إضافة اللعبة إلى مكتبتك', az: 'Oyun kitabxananıza əlavə edildi'
             },
             'game_add_failed': {
-                tr: 'Oyun kütüphaneye eklenemedi', en: 'Failed to add game', de: 'Spiel konnte nicht hinzugefügt werden', fr: 'Échec de l\'ajout du jeu', es: 'No se pudo añadir el juego', ru: 'Не удалось добавить игру', zh: '无法添加游戏', ja: 'ゲームを追加できませんでした', it: 'Impossibile aggiungere il gioco', pt: 'Falha ao adicionar o jogo', ko: '게임 추가 실패', ar: 'فشل في إضافة اللعبة'
+                tr: 'Oyun kütüphaneye eklenemedi', en: 'Failed to add game', de: 'Spiel konnte nicht hinzugefügt werden', fr: 'Échec de l\'ajout du jeu', es: 'No se pudo añadir el juego', ru: 'Не удалось добавить игру', zh: '无法添加游戏', ja: 'ゲームを追加できませんでした', it: 'Impossibile aggiungere il gioco', pt: 'Falha ao adicionar o jogo', ko: '게임 추가 실패', ar: 'فشل في إضافة اللعبة', az: 'Oyun kitabxanaya əlavə edilə bilmədi'
             },
             'load_more': {
-                tr: 'Daha fazla oyun yükle', en: 'Load more games', de: 'Mehr Spiele laden', fr: 'Charger plus de jeux', es: 'Cargar más juegos', ru: 'Загрузить больше игр', zh: '加载更多游戏', ja: 'さらにゲームを読み込む', it: 'Carica altri giochi', pt: 'Carregar mais jogos', ko: '더 많은 게임 불러오기', ar: 'تحميل المزيد من الألعاب'
+                tr: 'Daha fazla oyun yükle', en: 'Load more games', de: 'Mehr Spiele laden', fr: 'Charger plus de jeux', es: 'Cargar más juegos', ru: 'Загрузить больше игр', zh: '加载更多游戏', ja: 'さらにゲームを読み込む', it: 'Carica altri giochi', pt: 'Carregar mais jogos', ko: '더 많은 게임 불러오기', ar: 'تحميل المزيد من الألعاب', az: 'Daha çox oyun yüklə'
             },
             'searching': {
-                tr: 'Aranıyor...', en: 'Searching...', de: 'Wird gesucht...', fr: 'Recherche...', es: 'Buscando...', ru: 'Поиск...', zh: '搜索中...', ja: '検索中...', it: 'Ricerca...', pt: 'Pesquisando...', ko: '검색 중...', ar: 'يتم البحث...'
+                tr: 'Aranıyor...', en: 'Searching...', de: 'Wird gesucht...', fr: 'Recherche...', es: 'Buscando...', ru: 'Поиск...', zh: '搜索中...', ja: '検索中...', it: 'Ricerca...', pt: 'Pesquisando...', ko: '검색 중...', ar: 'يتم البحث...', az: 'Axtarılır...'
             },
             'no_results': {
-                tr: 'Sonuç bulunamadı', en: 'No results found', de: 'Keine Ergebnisse gefunden', fr: 'Aucun résultat trouvé', es: 'No se encontraron resultados', ru: 'Результаты не найдены', zh: '未找到结果', ja: '結果が見つかりません', it: 'Nessun risultato trovato', pt: 'Nenhum resultado encontrado', ko: '결과 없음', ar: 'لم يتم العثور على نتائج'
+                tr: 'Sonuç bulunamadı', en: 'No results found', de: 'Keine Ergebnisse gefunden', fr: 'Aucun résultat trouvé', es: 'No se encontraron resultados', ru: 'Результаты не найдены', zh: '未找到结果', ja: '結果が見つかりません', it: 'Nessun risultato trovato', pt: 'Nenhum resultado encontrado', ko: '결과 없음', ar: 'لم يتم العثور على نتائج', az: 'Nəticə tapılmadı'
             },
             'no_games': {
-                tr: 'Hiç oyun bulunamadı', en: 'No games found', de: 'Keine Spiele gefunden', fr: 'Aucun jeu trouvé', es: 'No se encontraron juegos', ru: 'Игры не найдены', zh: '未找到游戏', ja: 'ゲームが見つかりません', it: 'Nessun gioco trovato', pt: 'Nenhum jogo encontrado', ko: '게임 없음', ar: 'لم يتم العثور على ألعاب'
+                tr: 'Hiç oyun bulunamadı', en: 'No games found', de: 'Keine Spiele gefunden', fr: 'Aucun jeu trouvé', es: 'No se encontraron juegos', ru: 'Игры не найдены', zh: '未找到游戏', ja: 'ゲームが見つかりません', it: 'Nessun gioco trovato', pt: 'Nenhum jogo encontrado', ko: '게임 없음', ar: 'لم يتم العثور على ألعاب', az: 'Heç bir oyun tapılmadı'
             },
             'no_library_games': {
-                tr: 'Kütüphanenizde henüz oyun yok', en: 'No games in your library yet', de: 'Noch keine Spiele in der Bibliothek', fr: 'Aucun jeu dans votre bibliothèque', es: 'Aún no hay juegos en tu biblioteca', ru: 'В вашей библиотеке пока нет игр', zh: '您的库中还没有游戏', ja: 'ライブラリにまだゲームがありません', it: 'Nessun gioco nella tua libreria', pt: 'Ainda não há jogos na sua biblioteca', ko: '아직 라이브러리에 게임이 없습니다', ar: 'لا توجد ألعاب في مكتبتك بعد'
+                tr: 'Kütüphanenizde henüz oyun yok', en: 'No games in your library yet', de: 'Noch keine Spiele in der Bibliothek', fr: 'Aucun jeu dans votre bibliothèque', es: 'Aún no hay juegos en tu biblioteca', ru: 'В вашей библиотеке пока нет игр', zh: '您的库中还没有游戏', ja: 'ライブラリにまだゲームがありません', it: 'Nessun gioco nella tua libreria', pt: 'Ainda não há jogos na sua biblioteca', ko: '아직 라이브러리에 게임이 없습니다', ar: 'لا توجد ألعاب في مكتبتك بعد', az: 'Kitabxananızda hələ oyun yoxdur'
             },
             'no_description': {
-                tr: 'Açıklama bulunamadı', en: 'No description found', de: 'Keine Beschreibung gefunden', fr: 'Aucune description trouvée', es: 'No se encontró descripción', ru: 'Описание не найдено', zh: '未找到描述', ja: '説明が見つかりません', it: 'Nessuna descrizione trovata', pt: 'Nenhuma descrição encontrada', ko: '설명 없음', ar: 'لم يتم العثور على وصف'
+                tr: 'Açıklama bulunamadı', en: 'No description found', de: 'Keine Beschreibung gefunden', fr: 'Aucune description trouvée', es: 'No se encontró descripción', ru: 'Описание не найдено', zh: '未找到描述', ja: '説明が見つかりません', it: 'Nessuna descrizione trovata', pt: 'Nenhuma descrição encontrada', ko: '설명 없음', ar: 'لم يتم العثور على وصف', az: 'Təsvir tapılmadı'
             },
             'very_positive': {
-                tr: 'Çok Olumlu', en: 'Very Positive', de: 'Sehr positiv', fr: 'Très positif', es: 'Muy positivo', ru: 'Очень положительно', zh: '特别好评', ja: '非常に好評', it: 'Molto positivo', pt: 'Muito positivo', ko: '매우 긍정적', ar: 'إيجابي جدًا'
+                tr: 'Çok Olumlu', en: 'Very Positive', de: 'Sehr positiv', fr: 'Très positif', es: 'Muy positivo', ru: 'Очень положительно', zh: '特别好评', ja: '非常に好評', it: 'Molto positivo', pt: 'Muito positivo', ko: '매우 긍정적', ar: 'إيجابي جدًا', az: 'Çox müsbət'
             },
             'mixed': {
-                tr: 'Karışık', en: 'Mixed', de: 'Gemischt', fr: 'Mitigé', es: 'Mixto', ru: 'Смешанные', zh: '褒贬不一', ja: '賛否両論', it: 'Misto', pt: 'Misto', ko: '복합적', ar: 'مختلط'
+                tr: 'Karışık', en: 'Mixed', de: 'Gemischt', fr: 'Mitigé', es: 'Mixto', ru: 'Смешанные', zh: '褒贬不一', ja: '賛否両論', it: 'Misto', pt: 'Misto', ko: '복합적', ar: 'مختلط', az: 'Qarışıq'
             },
             'home': {
-                tr: 'Ana Sayfa', en: 'Home', de: 'Startseite', fr: 'Accueil', es: 'Inicio', ru: 'Главная', zh: '首页', ja: 'ホーム', it: 'Home', pt: 'Início', ko: '홈', ar: 'الرئيسية'
+                tr: 'Ana Sayfa', en: 'Home', de: 'Startseite', fr: 'Accueil', es: 'Inicio', ru: 'Главная', zh: '首页', ja: 'ホーム', it: 'Home', pt: 'Início', ko: '홈', ar: 'الرئيسية', az: 'Ana Səhifə'
             },
             'library_tab': {
-                tr: 'Kütüphane', en: 'Library', de: 'Bibliothek', fr: 'Bibliothèque', es: 'Biblioteca', ru: 'Библиотека', zh: '库', ja: 'ライブラリ', it: 'Libreria', pt: 'Biblioteca', ko: '라이브러리', ar: 'المكتبة'
+                tr: 'Kütüphane', en: 'Library', de: 'Bibliothek', fr: 'Bibliothèque', es: 'Biblioteca', ru: 'Библиотека', zh: '库', ja: 'ライブラリ', it: 'Libreria', pt: 'Biblioteca', ko: '라이브러리', ar: 'المكتبة', az: 'Kitabxana'
             },
             'settings_tab': {
-                tr: 'Ayarlar', en: 'Settings', de: 'Einstellungen', fr: 'Paramètres', es: 'Configuración', ru: 'Настройки', zh: '设置', ja: '設定', it: 'Impostazioni', pt: 'Configurações', ko: '설정', ar: 'الإعدادات'
+                tr: 'Ayarlar', en: 'Settings', de: 'Einstellungen', fr: 'Paramètres', es: 'Configuración', ru: 'Настройки', zh: '设置', ja: '設定', it: 'Impostazioni', pt: 'Configurações', ko: '설정', ar: 'الإعدادات', az: 'Parametrlər'
             },
             'start_game': {
-                tr: 'Oyunu Başlat', en: 'Launch Game', de: 'Spiel starten', fr: 'Lancer le jeu', es: 'Iniciar juego', ru: 'Запустить игру', zh: '启动游戏', ja: 'ゲーム開始', it: 'Avvia gioco', pt: 'Iniciar jogo', ko: '게임 시작', ar: 'تشغيل اللعبة'
+                tr: 'Oyunu Başlat', en: 'Launch Game', de: 'Spiel starten', fr: 'Lancer le jeu', es: 'Iniciar juego', ru: 'Запустить игру', zh: '启动游戏', ja: 'ゲーム開始', it: 'Avvia gioco', pt: 'Iniciar jogo', ko: '게임 시작', ar: 'تشغيل اللعبة', az: 'Oyunu başlat'
             },
             'remove_game': {
-                tr: 'Oyunu Sil', en: 'Delete Game', de: 'Spiel löschen', fr: 'Supprimer le jeu', es: 'Eliminar juego', ru: 'Удалить игру', zh: '删除游戏', ja: 'ゲーム削除', it: 'Elimina gioco', pt: 'Excluir jogo', ko: '게임 삭제', ar: 'حذف اللعبة'
+                tr: 'Oyunu Sil', en: 'Delete Game', de: 'Spiel löschen', fr: 'Supprimer le jeu', es: 'Eliminar juego', ru: 'Удалить игру', zh: '删除游戏', ja: 'ゲーム削除', it: 'Elimina gioco', pt: 'Excluir jogo', ko: '게임 삭제', ar: 'حذف اللعبة', az: 'Oyunu sil'
             },
             'already_added': {
-                tr: 'Zaten Sahipsiniz', en: 'Already Owned', de: 'Bereits vorhanden', fr: 'Déjà possédé', es: 'Ya en tu biblioteca', ru: 'Уже есть', zh: '已拥有', ja: 'すでに所有', it: 'Già posseduto', pt: 'Já possui', ko: '이미 보유', ar: 'موجود بالفعل'
+                tr: 'Zaten Sahipsiniz', en: 'Already Owned', de: 'Bereits vorhanden', fr: 'Déjà possédé', es: 'Ya en tu biblioteca', ru: 'Уже есть', zh: '已拥有', ja: 'すでに所有', it: 'Già posseduto', pt: 'Já possui', ko: '이미 보유', ar: 'موجود بالفعل', az: 'Artıq sahibsiniz'
             },
             'featured_game': {
-                tr: 'Öne Çıkan Oyun', en: 'Featured Game', de: 'Vorgestelltes Spiel', fr: 'Jeu présenté', es: 'Juego destacado', ru: 'Рекомендуемое игровое программное обеспечение', zh: '推荐游戏', ja: 'おすすめゲーム', it: 'Gioco in evidenza', pt: 'Jogo em destaque', ko: '추천 게임', ar: 'اللعبة الموصى بها'
+                tr: 'Öne Çıkan Oyun', en: 'Featured Game', de: 'Vorgestelltes Spiel', fr: 'Jeu présenté', es: 'Juego destacado', ru: 'Рекомендуемое игровое программное обеспечение', zh: '推荐游戏', ja: 'おすすめゲーム', it: 'Gioco in evidenza', pt: 'Jogo em destaque', ko: '추천 게임', ar: 'اللعبة الموصى بها', az: 'Seçilmiş Oyun'
             },
             'loading': {
-                tr: 'Yükleniyor...', en: 'Loading...', de: 'Lädt...', fr: 'Chargement...', es: 'Cargando...', ru: 'Загрузка...', zh: '加载中...', ja: '読み込み中...', it: 'Caricamento...', pt: 'Carregando...', ko: '로딩 중...', ar: 'جاري التحميل...'
+                tr: 'Yükleniyor...', en: 'Loading...', de: 'Lädt...', fr: 'Chargement...', es: 'Cargando...', ru: 'Загрузка...', zh: '加载中...', ja: '読み込み中...', it: 'Caricamento...', pt: 'Carregando...', ko: '로딩 중...', ar: 'جاري التحميل...', az: 'Yüklənir...'
             },
             'discovering_games': {
-                tr: 'Harika oyunlar keşfediliyor...', en: 'Discovering great games...', de: 'Entdecken Sie großartige Spiele...', fr: 'Découvrez de superbes jeux...', es: 'Descubriendo juegos geniales...', ru: 'Открываем замечательные игры...', zh: '发现精彩游戏...', ja: '素晴らしいゲームを発見中...', it: 'Scopri giochi fantastici...', pt: 'Descobrindo jogos incríveis...', ko: '멋진 게임을 발견 중...', ar: 'جاري اكتشاف الألعاب الرائعة...'
+                tr: 'Harika oyunlar keşfediliyor...', en: 'Discovering great games...', de: 'Entdecken Sie großartige Spiele...', fr: 'Découvrez de superbes jeux...', es: 'Descubriendo juegos geniales...', ru: 'Открываем замечательные игры...', zh: '发现精彩游戏...', ja: '素晴らしいゲームを発見中...', it: 'Scopri giochi fantastici...', pt: 'Descobrindo jogos incríveis...', ko: '멋진 게임을 발견 중...', ar: 'جاري اكتشاف الألعاب الرائعة...', az: 'Əla oyunlar kəşf edilir...'
             },
             'price': {
-                tr: 'Fiyat', en: 'Price', de: 'Preis', fr: 'Prix', es: 'Precio', ru: 'Цена', zh: '价格', ja: '価格', it: 'Prezzo', pt: 'Preço', ko: '가격', ar: 'السعر'
+                tr: 'Fiyat', en: 'Price', de: 'Preis', fr: 'Prix', es: 'Precio', ru: 'Цена', zh: '价格', ja: '価格', it: 'Prezzo', pt: 'Preço', ko: '가격', ar: 'السعر', az: 'Qiymət'
             },
             'featured_games': {
-                tr: 'Öne Çıkan Oyunlar', en: 'Featured Games', de: 'Vorgestellte Spiele', fr: 'Jeux présentés', es: 'Juegos destacados', ru: 'Рекомендуемые игры', zh: '推荐游戏', ja: 'おすすめゲーム', it: 'Giocchi in evidenza', pt: 'Jogos em destaque', ko: '추천 게임', ar: 'الألعاب الموصى بها'
+                tr: 'Öne Çıkan Oyunlar', en: 'Featured Games', de: 'Vorgestellte Spiele', fr: 'Jeux présentés', es: 'Juegos destacados', ru: 'Рекомендуемые игры', zh: '推荐游戏', ja: 'おすすめゲーム', it: 'Giocchi in evidenza', pt: 'Jogos em destaque', ko: '추천 게임', ar: 'الألعاب الموصى بها', az: 'Seçilmiş Oyunlar'
             },
             'steam_page': {
-                tr: 'Steam Sayfası', en: 'Steam Page', de: 'Steam Seite', fr: 'Page Steam', es: 'Página de Steam', ru: 'Страница Steam', zh: 'Steam页面', ja: 'Steamページ', it: 'Pagina Steam', pt: 'Página Steam', ko: 'Steam 페이지', ar: 'صفحة Steam'
+                tr: 'Steam Sayfası', en: 'Steam Page', de: 'Steam Seite', fr: 'Page Steam', es: 'Página de Steam', ru: 'Страница Steam', zh: 'Steam页面', ja: 'Steamページ', it: 'Pagina Steam', pt: 'Página Steam', ko: 'Steam 페이지', ar: 'صفحة Steam', az: 'Steam Səhifəsi'
             },
             'steam_config': {
-                tr: 'Steam Yapılandırması', en: 'Steam Configuration', de: 'Steam-Konfiguration', fr: 'Configuration Steam', es: 'Configuración de Steam', ru: 'Настройка Steam', zh: 'Steam设置', ja: 'Steam設定', it: 'Configurazione Steam', pt: 'Configuração Steam', ko: 'Steam 설정', pl: 'Konfiguracja Steam'
+                tr: 'Steam Yapılandırması', en: 'Steam Configuration', de: 'Steam-Konfiguration', fr: 'Configuration Steam', es: 'Configuración de Steam', ru: 'Настройка Steam', zh: 'Steam设置', ja: 'Steam設定', it: 'Configurazione Steam', pt: 'Configuração Steam', ko: 'Steam 설정', pl: 'Konfiguracja Steam', az: 'Steam Konfiqurasiyası'
             },
             'steam_path': {
-                tr: 'Steam Kurulum Yolu:', en: 'Steam Install Path:', de: 'Steam Installationspfad:', fr: 'Chemin d\'installation Steam:', es: 'Ruta de instalación de Steam:', ru: 'Путь установки Steam:', zh: 'Steam安装路径:', ja: 'Steamインストールパス:', it: 'Percorso di installazione Steam:', pt: 'Caminho de instalação do Steam:', ko: 'Steam 설치 경로:', pl: 'Ścieżka instalacji Steam:'
+                tr: 'Steam Kurulum Yolu:', en: 'Steam Install Path:', de: 'Steam Installationspfad:', fr: 'Chemin d\'installation Steam:', es: 'Ruta de instalación de Steam:', ru: 'Путь установки Steam:', zh: 'Steam安装路径:', ja: 'Steamインストールパス:', it: 'Percorso di installazione Steam:', pt: 'Caminho de instalação do Steam:', ko: 'Steam 설치 경로:', pl: 'Ścieżka instalacji Steam:', az: 'Steam Quraşdırma Yolu:'
             },
             'steam_path_placeholder': {
-                tr: 'Yüklü Steam dizini', en: 'Installed Steam directory', de: 'Installiertes Steam-Verzeichnis', fr: 'Répertoire Steam installé', es: 'Directorio de Steam instalado', ru: 'Установленный каталог Steam', zh: '已安装的Steam目录', ja: 'インストール済みのSteamディレクトリ', it: 'Directory Steam installata', pt: 'Diretório Steam instalado', ko: '설치된 Steam 디렉토리', pl: 'Zainstalowany katalog Steam'
+                tr: 'Yüklü Steam dizini', en: 'Installed Steam directory', de: 'Installiertes Steam-Verzeichnis', fr: 'Répertoire Steam installé', es: 'Directorio de Steam instalado', ru: 'Установленный каталог Steam', zh: '已安装的Steam目录', ja: 'インストール済みのSteamディレクトリ', it: 'Directory Steam installata', pt: 'Diretório Steam instalado', ko: '설치된 Steam 디렉토리', pl: 'Zainstalowany katalog Steam', az: 'Quraşdırılmış Steam qovluğu'
             },
             'browse': {
-                tr: 'Gözat', en: 'Browse', de: 'Durchsuchen', fr: 'Parcourir', es: 'Examinar', ru: 'Обзор', zh: '浏览', ja: '参照', it: 'Sfoglia', pt: 'Procurar', ko: '찾아보기', pl: 'Przeglądaj'
+                tr: 'Gözat', en: 'Browse', de: 'Durchsuchen', fr: 'Parcourir', es: 'Examinar', ru: 'Обзор', zh: '浏览', ja: '参照', it: 'Sfoglia', pt: 'Procurar', ko: '찾아보기', pl: 'Przeglądaj', az: 'Gözdən keçir'
             },
             'app_settings': {
-                tr: 'Uygulama Ayarları', en: 'App Settings', de: 'App-Einstellungen', fr: 'Paramètres de l\'application', es: 'Configuración de la aplicación', ru: 'Настройки приложения', zh: '应用设置', ja: 'アプリ設定', it: 'Impostazioni app', pt: 'Configurações do aplicativo', ko: '앱 설정', pl: 'Ustawienia aplikacji'
+                tr: 'Uygulama Ayarları', en: 'App Settings', de: 'App-Einstellungen', fr: 'Paramètres de l\'application', es: 'Configuración de la aplicación', ru: 'Настройки приложения', zh: '应用设置', ja: 'アプリ設定', it: 'Impostazioni app', pt: 'Configurações do aplicativo', ko: '앱 설정', pl: 'Ustawienia aplikacji', az: 'Tətbiq Parametrləri'
             },
             'enable_discord': {
-                tr: 'Discord Rich Presence\'ı Etkinleştir', en: 'Enable Discord Rich Presence', de: 'Discord Rich Presence aktivieren', fr: 'Activer Discord Rich Presence', es: 'Activar Discord Rich Presence', ru: 'Включить Discord Rich Presence', zh: '启用Discord Rich Presence', ja: 'Discord Rich Presenceを有効にする', it: 'Abilita Discord Rich Presence', pt: 'Ativar Discord Rich Presence', ko: 'Discord Rich Presence 활성화', pl: 'Włącz Discord Rich Presence'
+                tr: 'Discord Rich Presence\'ı Etkinleştir', en: 'Enable Discord Rich Presence', de: 'Discord Rich Presence aktivieren', fr: 'Activer Discord Rich Presence', es: 'Activar Discord Rich Presence', ru: 'Включить Discord Rich Presence', zh: '启用Discord Rich Presence', ja: 'Discord Rich Presenceを有効にする', it: 'Abilita Discord Rich Presence', pt: 'Ativar Discord Rich Presence', ko: 'Discord Rich Presence 활성화', pl: 'Włącz Discord Rich Presence', az: 'Discord Rich Presence-i Aktivləşdir'
             },
             'enable_animations': {
-                tr: 'Animasyonları Etkinleştir', en: 'Enable Animations', de: 'Animationen aktivieren', fr: 'Activer les animations', es: 'Activar animaciones', ru: 'Включить анимации', zh: '启用动画', ja: 'アニメーションを有効にする', it: 'Abilita animazioni', pt: 'Ativar animações', ko: '애니메이션 활성화', pl: 'Włącz animacje'
+                tr: 'Animasyonları Etkinleştir', en: 'Enable Animations', de: 'Animationen aktivieren', fr: 'Activer les animations', es: 'Activar animaciones', ru: 'Включить анимации', zh: '启用动画', ja: 'アニメーションを有効にする', it: 'Abilita animazioni', pt: 'Ativar animações', ko: '애니메이션 활성화', pl: 'Włącz animacje', az: 'Animasiyaları Aktivləşdir'
             },
             'enable_sounds': {
-                tr: 'Ses Efektlerini Etkinleştir', en: 'Enable Sound Effects', de: 'Soundeffekte aktivieren', fr: 'Activer les effets sonores', es: 'Activar efectos de sonido', ru: 'Включить звуковые эффекты', zh: '启用音效', ja: '効果音を有効にする', it: 'Abilita effetti sonori', pt: 'Ativar efeitos sonoros', ko: '사운드 효과 활성화', pl: 'Włącz efekty dźwiękowe'
+                tr: 'Ses Efektlerini Etkinleştir', en: 'Enable Sound Effects', de: 'Soundeffekte aktivieren', fr: 'Activer les effets sonores', es: 'Activar efectos de sonido', ru: 'Включить звуковые эффекты', zh: '启用音效', ja: '効果音を有効にする', it: 'Abilita effetti sonori', pt: 'Ativar efeitos sonoros', ko: '사운드 효과 활성화', pl: 'Włącz efekty dźwiękowe', az: 'Səs Effektlərini Aktivləşdir'
             },
             'game_title': {
-                tr: 'Oyun Adı', en: 'Game Title', de: 'Spieltitel', fr: 'Titre du jeu', es: 'Título del juego', ru: 'Название игры', zh: '游戏名称', ja: 'ゲームタイトル', it: 'Titolo del gioco', pt: 'Título do jogo', ko: '게임 제목', pl: 'Tytuł gry'
+                tr: 'Oyun Adı', en: 'Game Title', de: 'Spieltitel', fr: 'Titre du jeu', es: 'Título del juego', ru: 'Название игры', zh: '游戏名称', ja: 'ゲームタイトル', it: 'Titolo del gioco', pt: 'Título do jogo', ko: '게임 제목', pl: 'Tytuł gry', az: 'Oyun Adı'
             },
             'developer': {
-                tr: 'Geliştirici', en: 'Developer', de: 'Entwickler', fr: 'Développeur', es: 'Desarrollador', ru: 'Разработчик', zh: '开发者', ja: '開発者', it: 'Sviluppatore', pt: 'Desenvolvedor', ko: '개발자', pl: 'Deweloper'
+                tr: 'Geliştirici', en: 'Developer', de: 'Entwickler', fr: 'Développeur', es: 'Desarrollador', ru: 'Разработчик', zh: '开发者', ja: '開発者', it: 'Sviluppatore', pt: 'Desenvolvedor', ko: '개발자', pl: 'Deweloper', az: 'İnkişafçı'
             },
             'release_year': {
-                tr: 'Yıl', en: 'Year', de: 'Jahr', fr: 'Année', es: 'Año', ru: 'Год', zh: '年份', ja: '年', it: 'Anno', pt: 'Ano', ko: '연도', pl: 'Rok'
+                tr: 'Yıl', en: 'Year', de: 'Jahr', fr: 'Année', es: 'Año', ru: 'Год', zh: '年份', ja: '年', it: 'Anno', pt: 'Ano', ko: '연도', pl: 'Rok', az: 'İl'
             },
             'rating': {
-                tr: 'Değerlendirme', en: 'Rating', de: 'Bewertung', fr: 'Évaluation', es: 'Valoración', ru: 'Оценка', zh: '评分', ja: '評価', it: 'Valutazione', pt: 'Avaliação', ko: '평가', pl: 'Ocena'
+                tr: 'Değerlendirme', en: 'Rating', de: 'Bewertung', fr: 'Évaluation', es: 'Valoración', ru: 'Оценка', zh: '评分', ja: '評価', it: 'Valutazione', pt: 'Avaliação', ko: '평가', pl: 'Ocena', az: 'Qiymətləndirmə'
             },
             'price': {
-                tr: 'Fiyat', en: 'Price', de: 'Preis', fr: 'Prix', es: 'Precio', ru: 'Цена', zh: '价格', ja: '価格', it: 'Prezzo', pt: 'Preço', ko: '가격', pl: 'Cena'
+                tr: 'Fiyat', en: 'Price', de: 'Preis', fr: 'Prix', es: 'Precio', ru: 'Цена', zh: '价格', ja: '価格', it: 'Prezzo', pt: 'Preço', ko: '가격', pl: 'Cena', az: 'Qiymət'
             },
             'reviews': {
-                tr: 'İncelemeler', en: 'Reviews', de: 'Rezensionen', fr: 'Avis', es: 'Reseñas', ru: 'Отзывы', zh: '评论', ja: 'レビュー', it: 'Recensioni', pt: 'Avaliações', ko: '리뷰', pl: 'Recenzje'
+                tr: 'İncelemeler', en: 'Reviews', de: 'Rezensionen', fr: 'Avis', es: 'Reseñas', ru: 'Отзывы', zh: '评论', ja: 'レビュー', it: 'Recensioni', pt: 'Avaliações', ko: '리뷰', pl: 'Recenzje', az: 'Rəylər'
             },
             'about_game': {
-                tr: 'Bu Oyun Hakkında', en: 'About This Game', de: 'Über dieses Spiel', fr: 'À propos de ce jeu', es: 'Acerca de este juego', ru: 'Об этой игре', zh: '关于本游戏', ja: 'このゲームについて', it: 'Informazioni su questo gioco', pt: 'Sobre este jogo', ko: '이 게임에 대하여', pl: 'O tej grze'
+                tr: 'Bu Oyun Hakkında', en: 'About This Game', de: 'Über dieses Spiel', fr: 'À propos de ce jeu', es: 'Acerca de este juego', ru: 'Об этой игре', zh: '关于本游戏', ja: 'このゲームについて', it: 'Informazioni su questo gioco', pt: 'Sobre este jogo', ko: '이 게임에 대하여', pl: 'O tej grze', az: 'Bu Oyun Haqqında'
             },
             'game_description': {
-                tr: 'Oyun açıklaması burada yüklenecek...', en: 'Game description will be loaded here...', de: 'Spielbeschreibung wird hier geladen...', fr: 'La description du jeu sera chargée ici...', es: 'La descripción del juego se cargará aquí...', ru: 'Описание игры будет загружено здесь...', zh: '游戏描述将在此加载...', ja: 'ゲームの説明がここに表示されます...', it: 'La descrizione del gioco verrà caricata qui...', pt: 'A descrição do jogo será carregada aqui...', ko: '게임 설명이 여기에 표시됩니다...', pl: 'Opis gry zostanie tutaj załadowany...'
+                tr: 'Oyun açıklaması burada yüklenecek...', en: 'Game description will be loaded here...', de: 'Spielbeschreibung wird hier geladen...', fr: 'La description du jeu sera chargée ici...', es: 'La descripción del juego se cargará aquí...', ru: 'Описание игры будет загружено здесь...', zh: '游戏描述将在此加载...', ja: 'ゲームの説明がここに表示されます...', it: 'La descrizione del gioco verrà caricata qui...', pt: 'A descrição do jogo será carregada aqui...', ko: '게임 설명이 여기에 표시됩니다...', pl: 'Opis gry zostanie tutaj załadowany...', az: 'Oyun təsviri burada yüklənəcək...'
             },
             'publisher': {
-                tr: 'Yayıncı', en: 'Publisher', de: 'Herausgeber', fr: 'Éditeur', es: 'Editor', ru: 'Издатель', zh: '发行商', ja: 'パブリッシャー', it: 'Editore', pt: 'Editora', ko: '퍼블리셔', pl: 'Wydawca'
+                tr: 'Yayıncı', en: 'Publisher', de: 'Herausgeber', fr: 'Éditeur', es: 'Editor', ru: 'Издатель', zh: '发行商', ja: 'パブリッシャー', it: 'Editore', pt: 'Editora', ko: '퍼블리셔', pl: 'Wydawca', az: 'Nəşriyyatçı'
             },
             'release_date': {
-                tr: 'Çıkış Tarihi', en: 'Release Date', de: 'Erscheinungsdatum', fr: 'Date de sortie', es: 'Fecha de lanzamiento', ru: 'Дата выхода', zh: '发布日期', ja: '発売日', it: 'Data di rilascio', pt: 'Data de lançamento', ko: '출시일', pl: 'Data wydania'
+                tr: 'Çıkış Tarihi', en: 'Release Date', de: 'Erscheinungsdatum', fr: 'Date de sortie', es: 'Fecha de lanzamiento', ru: 'Дата выхода', zh: '发布日期', ja: '発売日', it: 'Data di rilascio', pt: 'Data de lançamento', ko: '출시일', pl: 'Data wydania', az: 'Buraxılış Tarixi'
             },
             'genres': {
-                tr: 'Türler', en: 'Genres', de: 'Genres', fr: 'Genres', es: 'Géneros', ru: 'Жанры', zh: '类型', ja: 'ジャンル', it: 'Generi', pt: 'Gêneros', ko: '장르', pl: 'Gatunki'
+                tr: 'Türler', en: 'Genres', de: 'Genres', fr: 'Genres', es: 'Géneros', ru: 'Жанры', zh: '类型', ja: 'ジャンル', it: 'Generi', pt: 'Gêneros', ko: '장르', pl: 'Gatunki', az: 'Janrlar'
             },
             'open_in_steam': {
-                tr: "Steam'de Aç", en: 'Open in Steam', de: 'In Steam öffnen', fr: 'Ouvrir dans Steam', es: 'Abrir en Steam', ru: 'Открыть в Steam', zh: '在Steam中打开', ja: 'Steamで開く', it: 'Apri su Steam', pt: 'Abrir no Steam', ko: 'Steam에서 열기', pl: 'Otwórz w Steam'
+                tr: "Steam'de Aç", en: 'Open in Steam', de: 'In Steam öffnen', fr: 'Ouvrir dans Steam', es: 'Abrir en Steam', ru: 'Открыть в Steam', zh: '在Steam中打开', ja: 'Steamで開く', it: 'Apri su Steam', pt: 'Abrir no Steam', ko: 'Steam에서 열기', pl: 'Otwórz w Steam', az: 'Steam-də Aç'
             },
             'loading_games': {
-                tr: 'Yükleniyor...', en: 'Loading...', de: 'Lädt...', fr: 'Chargement...', es: 'Cargando...', ru: 'Загрузка...', zh: '加载中...', ja: '読み込み中...', it: 'Caricamento...', pt: 'Carregando...', ko: '로딩 중...', ar: 'جاري التحميل...'
+                tr: 'Yükleniyor...', en: 'Loading...', de: 'Lädt...', fr: 'Chargement...', es: 'Cargando...', ru: 'Загрузка...', zh: '加载中...', ja: '読み込み中...', it: 'Caricamento...', pt: 'Carregando...', ko: '로딩 중...', ar: 'جاري التحميل...', az: 'Yüklənir...'
             },
             'feature_coming_soon': {
-                tr: 'Oyunu başlatma özelliği yakında eklenecek.', en: 'Game launch feature coming soon.', de: 'Spielstart-Funktion kommt bald.', fr: 'Fonction de lancement du jeu bientôt disponible.', es: 'La función de inicio de juego llegará pronto.', ru: 'Функция запуска игры скоро появится.', zh: '即将推出游戏启动功能。', ja: 'ゲーム起動機能は近日公開予定です。', it: 'La funzione di avvio del gioco arriverà presto.', pt: 'Recurso de iniciar jogo em breve.', ko: '게임 실행 기능 곧 제공 예정.', pl: 'Funkcja uruchamiania gry już wkrótce.' },
-            'error': { tr: 'Hata', en: 'Error', de: 'Fehler', fr: 'Erreur', es: 'Error', ru: 'Ошибка', zh: '错误', ja: 'エラー', it: 'Errore', pt: 'Erro', ko: '오류', pl: 'Błąd' },
-            'success': { tr: 'Başarılı', en: 'Success', de: 'Erfolg', fr: 'Succès', es: 'Éxito', ru: 'Успешно', zh: '成功', ja: '成功', it: 'Successo', pt: 'Sucesso', ko: '성공', pl: 'Sukces' },
-            'info': { tr: 'Bilgi', en: 'Info', de: 'Info', fr: 'Info', es: 'Información', ru: 'Инфо', zh: '信息', ja: '情報', it: 'Info', pt: 'Informação', ko: '정보', pl: 'Informacja' },
-            'game_not_found': { tr: 'Oyun bulunamadı', en: 'Game not found', de: 'Spiel nicht gefunden', fr: 'Jeu introuvable', es: 'Juego no encontrado', ru: 'Игра не найдена', zh: '未找到游戏', ja: 'ゲームが見つかりません', it: 'Gioco non trovato', pt: 'Jogo não encontrado', ko: '게임을 찾을 수 없음', pl: 'Nie znaleziono gry' },
-            'game_deleted': { tr: 'Oyun kütüphaneden silindi.', en: 'Game deleted from library.', de: 'Spiel aus Bibliothek gelöscht.', fr: 'Jeu supprimé de la bibliothèque.', es: 'Juego eliminado de la biblioteca.', ru: 'Игра удалена из библиотеки.', zh: '游戏已从库中删除。', ja: 'ライブラリからゲームが削除されました。', it: 'Gioco eliminato dalla libreria.', pt: 'Jogo removido da biblioteca.', ko: '라이브러리에서 게임이 삭제되었습니다.', pl: 'Gra została usunięta z biblioteki.' },
-            'game_delete_failed': { tr: 'Oyun silinemedi.', en: 'Game could not be deleted.', de: 'Spiel konnte nicht gelöscht werden.', fr: 'Impossible de supprimer le jeu.', es: 'No se pudo eliminar el juego.', ru: 'Не удалось удалить игру.', zh: '无法删除游戏。', ja: 'ゲームを削除できませんでした。', it: 'Impossibile eliminare il gioco.', pt: 'Não foi possível remover o jogo.', ko: '게임을 삭제할 수 없습니다.', pl: 'Nie można usunąć gry.' },
-            'feature_coming_soon': { tr: 'Oyunu başlatma özelliği yakında eklenecek.', en: 'Game launch feature coming soon.', de: 'Spielstart-Funktion kommt bald.', fr: 'Fonction de lancement du jeu bientôt disponible.', es: 'La función de inicio de juego llegará pronto.', ru: 'Функция запуска игры скоро появится.', zh: '即将推出游戏启动功能。', ja: 'ゲーム起動機能は近日公開予定です。', it: 'La funzione di avvio del gioco arriverà presto.', pt: 'Recurso de iniciar jogo em breve.', ko: '게임 실행 기능 곧 제공 예정.', pl: 'Funkcja uruchamiania gry już wkrótce.' },
-            'settings_saved': { tr: 'Ayarlar kaydedildi', en: 'Settings saved', de: 'Einstellungen gespeichert', fr: 'Paramètres enregistrés', es: 'Configuración guardada', ru: 'Настройки сохранены', zh: '设置已保存', ja: '設定が保存されました', it: 'Impostazioni salvate', pt: 'Configurações salvas', ko: '설정이 저장되었습니다', pl: 'Ustawienia zapisane' },
-            'settings_save_failed': { tr: 'Ayarlar kaydedilemedi', en: 'Settings could not be saved', de: 'Einstellungen konnten nicht gespeichert werden', fr: 'Impossible d\'enregistrer les paramètres', es: 'No se pudo guardar la configuración', ru: 'Не удалось сохранить настройки', zh: '无法保存设置', ja: '設定を保存できませんでした', it: 'Impossibile salvare le impostazioni', pt: 'Não foi possível salvar as configurações', ko: '설정을 저장할 수 없습니다', pl: 'Nie można zapisać ustawień' },
-            'config_load_failed': { tr: 'Yapılandırma yüklenemedi', en: 'Configuration could not be loaded', de: 'Konfiguration konnte nicht geladen werden', fr: 'Impossible de charger la configuration', es: 'No se pudo cargar la configuración', ru: 'Не удалось загрузить конфигурацию', zh: '无法加载配置', ja: '構成を読み込めませんでした', it: 'Impossibile caricare la configurazione', pt: 'Não foi possível carregar a configuração', ko: '구성을 불러올 수 없습니다', pl: 'Nie można załadować konfiguracji' },
-            'steam_path_set': { tr: 'Steam yolu başarıyla yapılandırıldı', en: 'Steam path set successfully', de: 'Steam-Pfad erfolgreich festgelegt', fr: 'Chemin Steam défini avec succès', es: 'Ruta de Steam configurada correctamente', ru: 'Путь к Steam успешно установлен', zh: 'Steam路径设置成功', ja: 'Steamパスが正常に設定されました', it: 'Percorso Steam impostato con successo', pt: 'Caminho do Steam definido com sucesso', ko: 'Steam 경로가 성공적으로 설정되었습니다', pl: 'Ścieżka Steam została pomyślnie ustawiona' },
-            'steam_path_failed': { tr: 'Steam yolu seçilemedi', en: 'Failed to set Steam path', de: 'Steam-Pfad konnte nicht festgelegt werden', fr: 'Impossible de définir le chemin Steam', es: 'No se pudo establecer la ruta de Steam', ru: 'Не удалось установить путь к Steam', zh: '无法设置Steam路径', ja: 'Steamパスを設定できませんでした', it: 'Impossibile impostare il percorso Steam', pt: 'Não foi possível definir o caminho do Steam', ko: 'Steam 경로를 설정할 수 없습니다', pl: 'Nie można ustawić ścieżki Steam' },
-            'restart_steam_title': { tr: "Steam'i Yeniden Başlat", en: 'Restart Steam', de: 'Steam neu starten', fr: 'Redémarrer Steam', es: 'Reiniciar Steam', ru: 'Перезапустить Steam', zh: '重新启动Steam', ja: 'Steamを再起動', it: 'Riavvia Steam', pt: 'Reiniciar Steam', ko: 'Steam 재시작', pl: 'Uruchom ponownie Steam' },
-            'restart_steam_info': { tr: "Oyun kütüphanenize eklendi! Değişiklikleri görmek için Steam'in yeniden başlatılması gerekiyor.", en: 'Game added to your library! To see the changes, Steam needs to be restarted.', de: 'Spiel zur Bibliothek hinzugefügt! Um die Änderungen zu sehen, muss Steam neu gestartet werden.', fr: 'Jeu ajouté à votre bibliothèque ! Pour voir les modifications, Steam doit être redémarré.', es: '¡Juego añadido a tu biblioteca! Para ver los cambios, es necesario reiniciar Steam.', ru: 'Игра добавлена в вашу библиотеку! Чтобы увидеть изменения, необходимо перезапустить Steam.', zh: '游戏已添加到您的库中！要查看更改，需要重新启动Steam。', ja: 'ゲームがライブラリに追加されました！変更を反映するにはSteamを再起動してください。', it: 'Gioco aggiunto alla tua libreria! Per vedere le modifiche, è necessario riavviare Steam.', pt: 'Jogo adicionado à sua biblioteca! Para ver as alterações, é necessário reiniciar o Steam.', ko: '게임이 라이브러리에 추가되었습니다! 변경 사항을 보려면 Steam을 재시작해야 합니다.', pl: 'Gra została dodana do twojej biblioteki! Aby zobaczyć zmiany, musisz ponownie uruchomić Steam.' },
-            'restart_steam_question': { tr: "Steam'i şimdi yeniden başlatmak istiyor musunuz?", en: 'Do you want to restart Steam now?', de: 'Möchten Sie Steam jetzt neu starten?', fr: 'Voulez-vous redémarrer Steam maintenant ?', es: '¿Quieres reiniciar Steam ahora?', ru: 'Вы хотите перезапустить Steam сейчас?', zh: '现在要重新启动Steam吗？', ja: '今すぐSteamを再起動しますか？', it: 'Vuoi riavviare Steam ora?', pt: 'Deseja reiniciar o Steam agora?', ko: '지금 Steam을 재시작하시겠습니까?', pl: 'Czy chcesz teraz ponownie uruchomić Steam?' },
-            'restart_steam_yes': { tr: 'Evet, Yeniden Başlat', en: 'Yes, Restart', de: 'Ja, neu starten', fr: 'Oui, redémarrer', es: 'Sí, reiniciar', ru: 'Да, перезапустить', zh: '是的，重新启动', ja: 'はい、再起動します', it: 'Sì, riavvia', pt: 'Sim, reiniciar', ko: '예, 재시작', pl: 'Tak, uruchom ponownie' },
-            'restart_steam_no': { tr: 'Hayır, Daha Sonra', en: 'No, Later', de: 'Nein, später', fr: 'Non, plus tard', es: 'No, más tarde', ru: 'Нет, позже', zh: '不，稍后', ja: 'いいえ、後で', it: 'No, più tardi', pt: 'Não, mais tarde', ko: '아니요, 나중에', pl: 'Nie, później' },
-            'select_dlcs': { tr: "DLC'leri Seç", en: 'Select DLCs', de: 'DLCs auswählen', fr: 'Sélectionner les DLC', es: 'Seleccionar DLCs', ru: 'Выбрать DLC', zh: '选择DLC', ja: 'DLCを選択', it: 'Seleziona DLC', pt: 'Selecionar DLCs', ko: 'DLC 선택', pl: 'Wybierz DLC' },
-            'add_selected': { tr: 'Seçilenleri Ekle', en: 'Add Selected', de: 'Ausgewählte hinzufügen', fr: 'Ajouter la sélection', es: 'Agregar seleccionados', ru: 'Добавить выбранные', zh: '添加所选', ja: '選択したものを追加', it: 'Aggiungi selezionati', pt: 'Adicionar selecionados', ko: '선택 항목 추가', pl: 'Dodaj wybrane' },
-            'cancel': { tr: 'İptal', en: 'Cancel', de: 'Abbrechen', fr: 'Annuler', es: 'Cancelar', ru: 'Отмена', zh: '取消', ja: 'キャンセル', it: 'Annulla', pt: 'Cancelar', ko: '취소', pl: 'Anuluj' },
+                tr: 'Oyunu başlatma özelliği yakında eklenecek.', en: 'Game launch feature coming soon.', de: 'Spielstart-Funktion kommt bald.', fr: 'Fonction de lancement du jeu bientôt disponible.', es: 'La función de inicio de juego llegará pronto.', ru: 'Функция запуска игры скоро появится.', zh: '即将推出游戏启动功能。', ja: 'ゲーム起動機能は近日公開予定です。', it: 'La funzione di avvio del gioco arriverà presto.', pt: 'Recurso de iniciar jogo em breve.', ko: '게임 실행 기능 곧 제공 예정.', pl: 'Funkcja uruchamiania gry już wkrótce.', az: 'Oyun başlatma xüsusiyyəti tezliklə əlavə ediləcək.' },
+            'error': { tr: 'Hata', en: 'Error', de: 'Fehler', fr: 'Erreur', es: 'Error', ru: 'Ошибка', zh: '错误', ja: 'エラー', it: 'Errore', pt: 'Erro', ko: '오류', pl: 'Błąd', az: 'Xəta' },
+            'success': { tr: 'Başarılı', en: 'Success', de: 'Erfolg', fr: 'Succès', es: 'Éxito', ru: 'Успешно', zh: '成功', ja: '成功', it: 'Successo', pt: 'Sucesso', ko: '성공', pl: 'Sukces', az: 'Uğurlu' },
+            'info': { tr: 'Bilgi', en: 'Info', de: 'Info', fr: 'Info', es: 'Información', ru: 'Инфо', zh: '信息', ja: '情報', it: 'Info', pt: 'Informação', ko: '정보', pl: 'Informacja', az: 'Məlumat' },
+            'game_not_found': { tr: 'Oyun bulunamadı', en: 'Game not found', de: 'Spiel nicht gefunden', fr: 'Jeu introuvable', es: 'Juego no encontrado', ru: 'Игра не найдена', zh: '未找到游戏', ja: 'ゲームが見つかりません', it: 'Gioco non trovato', pt: 'Jogo não encontrado', ko: '게임을 찾을 수 없음', pl: 'Nie znaleziono gry', az: 'Oyun tapılmadı' },
+            'game_deleted': { tr: 'Oyun kütüphaneden silindi.', en: 'Game deleted from library.', de: 'Spiel aus Bibliothek gelöscht.', fr: 'Jeu supprimé de la bibliothèque.', es: 'Juego eliminado de la biblioteca.', ru: 'Игра удалена из библиотеки.', zh: '游戏已从库中删除。', ja: 'ライブラリからゲームが削除されました。', it: 'Gioco eliminato dalla libreria.', pt: 'Jogo removido da biblioteca.', ko: '라이브러리에서 게임이 삭제되었습니다.', pl: 'Gra została usunięta z biblioteki.', az: 'Oyun kitabxanadan silindi.' },
+            'game_delete_failed': { tr: 'Oyun silinemedi.', en: 'Game could not be deleted.', de: 'Spiel konnte nicht gelöscht werden.', fr: 'Impossible de supprimer le jeu.', es: 'No se pudo eliminar el juego.', ru: 'Не удалось удалить игру.', zh: '无法删除游戏。', ja: 'ゲームを削除できませんでした。', it: 'Impossibile eliminare il gioco.', pt: 'Não foi possível remover o jogo.', ko: '게임을 삭제할 수 없습니다.', pl: 'Nie można usunąć gry.', az: 'Oyun silinə bilmədi.' },
+            'feature_coming_soon': { tr: 'Oyunu başlatma özelliği yakında eklenecek.', en: 'Game launch feature coming soon.', de: 'Spielstart-Funktion kommt bald.', fr: 'Fonction de lancement du jeu bientôt disponible.', es: 'La función de inicio de juego llegará pronto.', ru: 'Функция запуска игры скоро появится.', zh: '即将推出游戏启动功能。', ja: 'ゲーム起動機能は近日公開予定です。', it: 'La funzione di avvio del gioco arriverà presto.', pt: 'Recurso de iniciar jogo em breve.', ko: '게임 실행 기능 곧 제공 예정.', pl: 'Funkcja uruchamiania gry już wkrótce.', az: 'Oyun başlatma xüsusiyyəti tezliklə əlavə ediləcək.' },
+            'settings_saved': { tr: 'Ayarlar kaydedildi', en: 'Settings saved', de: 'Einstellungen gespeichert', fr: 'Paramètres enregistrés', es: 'Configuración guardada', ru: 'Настройки сохранены', zh: '设置已保存', ja: '設定が保存されました', it: 'Impostazioni salvate', pt: 'Configurações salvas', ko: '설정이 저장되었습니다', pl: 'Ustawienia zapisane', az: 'Parametrlər saxlanıldı' },
+            'settings_save_failed': { tr: 'Ayarlar kaydedilemedi', en: 'Settings could not be saved', de: 'Einstellungen konnten nicht gespeichert werden', fr: 'Impossible d\'enregistrer les paramètres', es: 'No se pudo guardar la configuración', ru: 'Не удалось сохранить настройки', zh: '无法保存设置', ja: '設定を保存できませんでした', it: 'Impossibile salvare le impostazioni', pt: 'Não foi possível salvar as configurações', ko: '설정을 저장할 수 없습니다', pl: 'Nie można zapisać ustawień', az: 'Parametrlər saxlanıla bilmədi' },
+            'config_load_failed': { tr: 'Yapılandırma yüklenemedi', en: 'Configuration could not be loaded', de: 'Konfiguration konnte nicht geladen werden', fr: 'Impossible de charger la configuration', es: 'No se pudo cargar la configuración', ru: 'Не удалось загрузить конфигурацию', zh: '无法加载配置', ja: '構成を読み込めませんでした', it: 'Impossibile caricare la configurazione', pt: 'Não foi possível carregar a configuração', ko: '구성을 불러올 수 없습니다', pl: 'Nie można załadować konfiguracji', az: 'Konfiqurasiya yüklənə bilmədi' },
+            'steam_path_set': { tr: 'Steam yolu başarıyla yapılandırıldı', en: 'Steam path set successfully', de: 'Steam-Pfad erfolgreich festgelegt', fr: 'Chemin Steam défini avec succès', es: 'Ruta de Steam configurada correctamente', ru: 'Путь к Steam успешно установлен', zh: 'Steam路径设置成功', ja: 'Steamパスが正常に設定されました', it: 'Percorso Steam impostato con successo', pt: 'Caminho do Steam definido com sucesso', ko: 'Steam 경로가 성공적으로 설정되었습니다', pl: 'Ścieżka Steam została pomyślnie ustawiona', az: 'Steam yolu uğurla konfiqurasiya edildi' },
+            'steam_path_failed': { tr: 'Steam yolu seçilemedi', en: 'Failed to set Steam path', de: 'Steam-Pfad konnte nicht festgelegt werden', fr: 'Impossible de définir le chemin Steam', es: 'No se pudo establecer la ruta de Steam', ru: 'Не удалось установить путь к Steam', zh: '无法设置Steam路径', ja: 'Steamパスを設定できませんでした', it: 'Impossibile impostare il percorso Steam', pt: 'Não foi possível definir o caminho do Steam', ko: 'Steam 경로를 설정할 수 없습니다', pl: 'Nie można ustawić ścieżki Steam', az: 'Steam yolu seçilə bilmədi' },
+            'restart_steam_title': { tr: "Steam'i Yeniden Başlat", en: 'Restart Steam', de: 'Steam neu starten', fr: 'Redémarrer Steam', es: 'Reiniciar Steam', ru: 'Перезапустить Steam', zh: '重新启动Steam', ja: 'Steamを再起動', it: 'Riavvia Steam', pt: 'Reiniciar Steam', ko: 'Steam 재시작', pl: 'Uruchom ponownie Steam', az: 'Steam-i Yenidən Başlat' },
+            'restart_steam_info': { tr: "Oyun kütüphanenize eklendi! Değişiklikleri görmek için Steam'in yeniden başlatılması gerekiyor.", en: 'Game added to your library! To see the changes, Steam needs to be restarted.', de: 'Spiel zur Bibliothek hinzugefügt! Um die Änderungen zu sehen, muss Steam neu gestartet werden.', fr: 'Jeu ajouté à votre bibliothèque ! Pour voir les modifications, Steam doit être redémarré.', es: '¡Juego añadido a tu biblioteca! Para ver los cambios, es necesario reiniciar Steam.', ru: 'Игра добавлена в вашу библиотеку! Чтобы увидеть изменения, необходимо перезапустить Steam.', zh: '游戏已添加到您的库中！要查看更改，需要重新启动Steam。', ja: 'ゲームがライブラリに追加されました！変更を反映するにはSteamを再起動してください。', it: 'Gioco aggiunto alla tua libreria! Per vedere le modifiche, è necessario riavviare Steam.', pt: 'Jogo adicionado à sua biblioteca! Para ver as alterações, é necessário reiniciar o Steam.', ko: '게임이 라이브러리에 추가되었습니다! 변경 사항을 보려면 Steam을 재시작해야 합니다.', pl: 'Gra została dodana do twojej biblioteki! Aby zobaczyć zmiany, musisz ponownie uruchomić Steam.', az: 'Oyun kitabxananıza əlavə edildi! Dəyişiklikləri görmək üçün Steam-in yenidən başladılması lazımdır.' },
+            'restart_steam_question': { tr: "Steam'i şimdi yeniden başlatmak istiyor musunuz?", en: 'Do you want to restart Steam now?', de: 'Möchten Sie Steam jetzt neu starten?', fr: 'Voulez-vous redémarrer Steam maintenant ?', es: '¿Quieres reiniciar Steam ahora?', ru: 'Вы хотите перезапустить Steam сейчас?', zh: '现在要重新启动Steam吗？', ja: '今すぐSteamを再起動しますか？', it: 'Vuoi riavviare Steam ora?', pt: 'Deseja reiniciar o Steam agora?', ko: '지금 Steam을 재시작하시겠습니까?', pl: 'Czy chcesz teraz ponownie uruchomić Steam?', az: 'Steam-i indi yenidən başlatmaq istəyirsiniz?' },
+            'restart_steam_yes': { tr: 'Evet, Yeniden Başlat', en: 'Yes, Restart', de: 'Ja, neu starten', fr: 'Oui, redémarrer', es: 'Sí, reiniciar', ru: 'Да, перезапустить', zh: '是的，重新启动', ja: 'はい、再起動します', it: 'Sì, riavvia', pt: 'Sim, reiniciar', ko: '예, 재시작', pl: 'Tak, uruchom ponownie', az: 'Bəli, Yenidən Başlat' },
+            'restart_steam_no': { tr: 'Hayır, Daha Sonra', en: 'No, Later', de: 'Nein, später', fr: 'Non, plus tard', es: 'No, más tarde', ru: 'Нет, позже', zh: '不，稍后', ja: 'いいえ、後で', it: 'No, più tardi', pt: 'Não, mais tarde', ko: '아니요, 나중에', pl: 'Nie, później', az: 'Xeyr, Sonra' },
+            'select_dlcs': { tr: "DLC'leri Seç", en: 'Select DLCs', de: 'DLCs auswählen', fr: 'Sélectionner les DLC', es: 'Seleccionar DLCs', ru: 'Выбрать DLC', zh: '选择DLC', ja: 'DLCを選択', it: 'Seleziona DLC', pt: 'Selecionar DLCs', ko: 'DLC 선택', pl: 'Wybierz DLC', az: 'DLC-ləri Seç' },
+            'add_selected': { tr: 'Seçilenleri Ekle', en: 'Add Selected', de: 'Ausgewählte hinzufügen', fr: 'Ajouter la sélection', es: 'Agregar seleccionados', ru: 'Добавить выбранные', zh: '添加所选', ja: '選択したものを追加', it: 'Aggiungi selezionati', pt: 'Adicionar selecionados', ko: '선택 항목 추가', pl: 'Dodaj wybrane', az: 'Seçilənləri Əlavə Et' },
+            'cancel': { tr: 'İptal', en: 'Cancel', de: 'Abbrechen', fr: 'Annuler', es: 'Cancelar', ru: 'Отмена', zh: '取消', ja: 'キャンセル', it: 'Annulla', pt: 'Cancelar', ko: '취소', pl: 'Anuluj', az: 'Ləğv Et' },
             'select_all_dlcs': {
-                tr: "Tüm DLC'leri Seç", en: 'Select All DLCs', de: 'Alle DLCs auswählen', fr: 'Tout sélectionner', es: 'Seleccionar todos los DLC', ru: 'Выбрать все DLC', zh: '全选DLC', ja: 'すべてのDLCを選択', it: 'Seleziona tutti i DLC', pt: 'Selecionar todos os DLCs', ko: '모든 DLC 선택', pl: 'Zaznacz wszystkie DLC'
+                tr: "Tüm DLC'leri Seç", en: 'Select All DLCs', de: 'Alle DLCs auswählen', fr: 'Tout sélectionner', es: 'Seleccionar todos los DLC', ru: 'Выбрать все DLC', zh: '全选DLC', ja: 'すべてのDLCを選択', it: 'Seleziona tutti i DLC', pt: 'Selecionar todos os DLCs', ko: '모든 DLC 선택', pl: 'Zaznacz wszystkie DLC', az: 'Bütün DLC-ləri Seç'
             },
             'dlc_free': {
-                tr: 'Ücretsiz', en: 'Free', de: 'Kostenlos', fr: 'Gratuit', es: 'Gratis', ru: 'Бесплатно', zh: '免费', ja: '無料', it: 'Gratis', pt: 'Grátis', ko: '무료', pl: 'Darmowe'
+                tr: 'Ücretsiz', en: 'Free', de: 'Kostenlos', fr: 'Gratuit', es: 'Gratis', ru: 'Бесплатно', zh: '免费', ja: '無料', it: 'Gratis', pt: 'Grátis', ko: '무료', pl: 'Darmowe', az: 'Pulsuz'
             },
             'dlc_price': {
-                tr: 'Fiyat', en: 'Price', de: 'Preis', fr: 'Prix', es: 'Precio', ru: 'Цена', zh: '价格', ja: '価格', it: 'Prezzo', pt: 'Preço', ko: '가격', pl: 'Cena'
+                tr: 'Fiyat', en: 'Price', de: 'Preis', fr: 'Prix', es: 'Precio', ru: 'Цена', zh: '价格', ja: '価格', it: 'Prezzo', pt: 'Preço', ko: '가격', pl: 'Cena', az: 'Qiymət'
             },
             'dlc_release_date': {
-                tr: 'Çıkış Tarihi', en: 'Release Date', de: 'Erscheinungsdatum', fr: 'Date de sortie', es: 'Fecha de lanzamiento', ru: 'Дата выхода', zh: '发布日期', ja: '発売日', it: 'Data di rilascio', pt: 'Data de lançamento', ko: '출시일', pl: 'Data wydania'
+                tr: 'Çıkış Tarihi', en: 'Release Date', de: 'Erscheinungsdatum', fr: 'Date de sortie', es: 'Fecha de lanzamiento', ru: 'Дата выхода', zh: '发布日期', ja: '発売日', it: 'Data di rilascio', pt: 'Data de lançamento', ko: '출시일', pl: 'Data wydania', az: 'Buraxılış Tarixi'
             },
             'game_added_with_dlcs': {
                 tr: 'Oyun {dlcCount} DLC ile eklendi',
@@ -1663,7 +2197,8 @@ class SteamLibraryUI {
                 it: 'Gioco aggiunto con {dlcCount} DLC',
                 pt: 'Jogo adicionado com {dlcCount} DLC(s)',
                 ko: '{dlcCount}개의 DLC와 함께 게임이 추가되었습니다',
-                pl: 'Gra dodana z {dlcCount} DLC'
+                pl: 'Gra dodana z {dlcCount} DLC',
+                az: 'Oyun {dlcCount} DLC ilə əlavə edildi'
             },
             'game_add_with_dlcs_failed': {
                 tr: 'Oyun DLC\'lerle eklenemedi',
@@ -1677,7 +2212,8 @@ class SteamLibraryUI {
                 it: 'Impossibile aggiungere il gioco con i DLC',
                 pt: 'Falha ao adicionar o jogo com DLCs',
                 ko: 'DLC와 함께 게임을 추가하지 못했습니다',
-                pl: 'Nie można dodać gry z DLC'
+                pl: 'Nie można dodać gry z DLC',
+                az: 'Oyun DLC ilə əlavə edilə bilməz'
             },
             'mute_videos': {
                 tr: 'Oyun detaylarındaki videoların sesi otomatik kapalı olsun',
@@ -1691,7 +2227,8 @@ class SteamLibraryUI {
                 it: 'Disattiva l\'audio dei video nei dettagli gioco',
                 pt: 'Silenciar vídeos nos detalhes do jogo por padrão',
                 ko: '게임 상세 정보의 비디오를 기본적으로 음소거',
-                pl: 'Domyślnie wyciszaj filmy w szczegółach gry'
+                pl: 'Domyślnie wyciszaj filmy w szczegółach gry',
+                az: 'Oyun təfərrüatlarında videoları avtomatik olaraq susdurun'
             },
             'refresh_library': {
                 tr: 'Kütüphaneyi Yenile',
@@ -1705,7 +2242,8 @@ class SteamLibraryUI {
                 it: 'Aggiorna libreria',
                 pt: 'Atualizar biblioteca',
                 ko: '라이브러리 새로고침',
-                pl: 'Odśwież bibliotekę'
+                pl: 'Odśwież bibliotekę',
+                az: 'Kitabxananı yeniləyin'
             },
             'refreshing_library': {
                 tr: 'Kütüphane yenileniyor...',
@@ -1719,7 +2257,55 @@ class SteamLibraryUI {
                 it: 'Aggiornamento libreria...',
                 pt: 'Atualizando biblioteca...',
                 ko: '라이브러리 새로고침 중...',
-                pl: 'Odświeżanie biblioteki...'
+                pl: 'Odświeżanie biblioteki...',
+                az: 'Kitabxana yenilənir...'
+            },
+            'download': {
+                tr: 'İndir',
+                en: 'Download',
+                de: 'Herunterladen',
+                fr: 'Télécharger',
+                es: 'Descargar',
+                ru: 'Скачать',
+                zh: '下载',
+                ja: 'ダウンロード',
+                it: 'Scarica',
+                pt: 'Baixar',
+                ko: '다운로드',
+                pl: 'Pobierz',
+                az: 'Yüklə'
+            },
+            'download_success': {
+                tr: 'Oyun başarıyla indirildi',
+                en: 'Game downloaded successfully',
+                de: 'Spiel erfolgreich heruntergeladen',
+                fr: 'Jeu téléchargé avec succès',
+                es: 'Juego descargado exitosamente',
+                ru: 'Игра успешно скачана',
+                zh: '游戏下载成功',
+                ja: 'ゲームが正常にダウンロードされました',
+                it: 'Gioco scaricato con successo',
+                pt: 'Jogo baixado com sucesso',
+                ko: '게임이 성공적으로 다운로드되었습니다',
+                pl: 'Gra została pomyślnie pobrana',
+                az: 'Oyun uğurla yükləndi'
+            },
+            'download_failed': {
+                tr: 'İndirme başarısız',
+                en: 'Download failed',
+                de: 'Download fehlgeschlagen',
+                fr: 'Échec du téléchargement',
+                es: 'Error al descargar',
+                ru: 'Ошибка загрузки',
+                zh: '下载失败',
+                ja: 'ダウンロードに失敗しました',
+                it: 'Download fallito',
+                pt: 'Falha no download',
+                ko: '다운로드 실패',
+                pl: 'Pobieranie nie powiodło się',
+                az: 'Yükləmə uğursuz oldu'
+        
+     
             },
             'library_refreshed': {
                 tr: 'Kütüphane başarıyla yenilendi',
@@ -1733,7 +2319,8 @@ class SteamLibraryUI {
                 it: 'Libreria aggiornata con successo',
                 pt: 'Biblioteca atualizada com sucesso',
                 ko: '라이브러리가 성공적으로 새로고침되었습니다',
-                pl: 'Biblioteka została pomyślnie odświeżona'
+                pl: 'Biblioteka została pomyślnie odświeżona',
+                az: 'Kitabxana uğurla yeniləndi'
             },
             'library_refresh_failed': {
                 tr: 'Kütüphane yenilenemedi',
@@ -1747,7 +2334,8 @@ class SteamLibraryUI {
                 it: 'Impossibile aggiornare la libreria',
                 pt: 'Falha ao atualizar biblioteca',
                 ko: '라이브러리 새로고침 실패',
-                pl: 'Nie udało się odświeżyć biblioteki'
+                pl: 'Nie udało się odświeżyć biblioteki',
+                az: 'Kitabxana yenilənə bilməz'
             },
             'manual_install': {
                 tr: 'Manuel Kurulum',
@@ -1761,7 +2349,8 @@ class SteamLibraryUI {
                 it: 'Installazione manuale',
                 pt: 'Instalação manual',
                 ko: '수동 설치',
-                pl: 'Instalacja ręczna'
+                pl: 'Instalacja ręczna',
+                az: 'Əlavə Quraşdırma'
             },
             'upload_game_file': {
                 tr: 'Oyun Dosyasını Yükle',
@@ -1775,7 +2364,8 @@ class SteamLibraryUI {
                 it: 'Carica file di gioco',
                 pt: 'Enviar arquivo do jogo',
                 ko: '게임 파일 업로드',
-                pl: 'Prześlij plik gry'
+                pl: 'Prześlij plik gry',
+                az: 'Oyun Faylını Yüklə'
             },
             'drag_drop_zip': {
                 tr: 'ZIP dosyasını buraya sürükleyip bırakın veya tıklayarak seçin',
@@ -1789,7 +2379,8 @@ class SteamLibraryUI {
                 it: 'Trascina e rilascia il file ZIP qui o clicca per selezionare',
                 pt: 'Arraste e solte o arquivo ZIP aqui ou clique para selecionar',
                 ko: 'ZIP 파일을 여기에 끌어다 놓거나 클릭하여 선택',
-                pl: 'Przeciągnij i upuść plik ZIP tutaj lub kliknij, aby wybrać'
+                pl: 'Przeciągnij i upuść plik ZIP tutaj lub kliknij, aby wybrać',
+                az: 'ZIP faylını buraya sürükləyin və ya seçin'
             },
             'select_file': {
                 tr: 'Dosya Seç',
@@ -1803,7 +2394,8 @@ class SteamLibraryUI {
                 it: 'Seleziona file',
                 pt: 'Selecionar arquivo',
                 ko: '파일 선택',
-                pl: 'Wybierz plik'
+                pl: 'Wybierz plik',
+                az: 'Fayl Seç'
             },
             'game_info': {
                 tr: 'Oyun Bilgileri',
@@ -1817,7 +2409,8 @@ class SteamLibraryUI {
                 it: 'Informazioni sul gioco',
                 pt: 'Informações do jogo',
                 ko: '게임 정보',
-                pl: 'Informacje o grze'
+                pl: 'Informacje o grze',
+                az: 'Oyun Məlumatları'
             },
             'game_name': {
                 tr: 'Oyun Adı',
@@ -1831,7 +2424,8 @@ class SteamLibraryUI {
                 it: 'Nome del gioco',
                 pt: 'Nome do jogo',
                 ko: '게임 이름',
-                pl: 'Nazwa gry'
+                pl: 'Nazwa gry',
+                az: 'Oyun Adı'
             },
             'steam_app_id': {
                 tr: 'Steam App ID ',
@@ -1845,7 +2439,8 @@ class SteamLibraryUI {
                 it: 'ID app Steam ',
                 pt: 'ID do aplicativo Steam',
                 ko: 'Steam 앱 ID ',
-                pl: 'ID aplikacji Steam '
+                pl: 'ID aplikacji Steam ',
+                az: 'Steam App ID '
             },
             'game_folder': {
                 tr: 'Oyun Klasörü',
@@ -1859,7 +2454,8 @@ class SteamLibraryUI {
                 it: 'Cartella del gioco',
                 pt: 'Pasta do jogo',
                 ko: '게임 폴더',
-                pl: 'Folder gry'
+                pl: 'Folder gry',
+                az: 'Oyun Qovlu'
             },
             'install_game': {
                 tr: 'Oyunu Kur',
@@ -1873,7 +2469,8 @@ class SteamLibraryUI {
                 it: 'Installa gioco',
                 pt: 'Instalar jogo',
                 ko: '게임 설치',
-                pl: 'Zainstaluj grę'
+                pl: 'Zainstaluj grę',
+                az: 'Oyunu quraşdır'
             },
             'only_zip_supported': {
                 tr: 'Sadece ZIP dosyaları desteklenir',
@@ -1887,7 +2484,8 @@ class SteamLibraryUI {
                 it: 'Sono supportati solo file ZIP',
                 pt: 'Apenas arquivos ZIP são suportados',
                 ko: 'ZIP 파일만 지원됩니다',
-                pl: 'Obsługiwane są tylko pliki ZIP'
+                pl: 'Obsługiwane są tylko pliki ZIP',
+                az: 'Yalnız ZIP faylları qoşulur'
             },
             'file_not_found': {
                 tr: 'Seçilen dosya bulunamadı',
@@ -1901,7 +2499,8 @@ class SteamLibraryUI {
                 it: 'File selezionato non trovato',
                 pt: 'Arquivo selecionado não encontrado',
                 ko: '선택한 파일을 찾을 수 없습니다',
-                pl: 'Nie znaleziono wybranego pliku'
+                pl: 'Nie znaleziono wybranego pliku',
+                az: 'Seçilmiş fayl tapılmadı'
             },
             'invalid_zip': {
                 tr: 'Geçersiz ZIP dosyası',
@@ -1915,7 +2514,8 @@ class SteamLibraryUI {
                 it: 'File ZIP non valido',
                 pt: 'Arquivo ZIP inválido',
                 ko: '잘못된 ZIP 파일',
-                pl: 'Nieprawidłowy plik ZIP'
+                pl: 'Nieprawidłowy plik ZIP',
+                az: 'Yanlış ZIP faylı'
             },
             'game_installed_successfully': {
                 tr: 'Oyun başarıyla kuruldu',
@@ -1929,7 +2529,8 @@ class SteamLibraryUI {
                 it: 'Gioco installato con successo',
                 pt: 'Jogo instalado com sucesso',
                 ko: '게임이 성공적으로 설치되었습니다',
-                pl: 'Gra została pomyślnie zainstalowana'
+                pl: 'Gra została pomyślnie zainstalowana',
+                az: 'Oyun uğurla quraşdırıldı'
             },
             'installation_failed': {
                 tr: 'Kurulum başarısız',
@@ -1943,7 +2544,8 @@ class SteamLibraryUI {
                 it: 'Installazione fallita',
                 pt: 'Falha na instalação',
                 ko: '설치 실패',
-                pl: 'Instalacja nie powiodła się'
+                pl: 'Instalacja nie powiodła się',
+                az: 'Quraşdırma uğursuz oldu'
             },
             'please_select_file': {
                 tr: 'Lütfen önce bir dosya seçin',
@@ -1957,7 +2559,8 @@ class SteamLibraryUI {
                 it: 'Seleziona prima un file',
                 pt: 'Por favor, selecione um arquivo primeiro',
                 ko: '먼저 파일을 선택하세요',
-                pl: 'Najpierw wybierz plik'
+                pl: 'Najpierw wybierz plik',
+                az: 'Əvvəlcə fayl seçin'
             },
 
             'installation_error': {
@@ -1972,7 +2575,8 @@ class SteamLibraryUI {
                 it: 'Errore durante l\'installazione',
                 pt: 'Erro durante a instalação',
                 ko: '설치 중 오류가 발생했습니다',
-                pl: 'Wystąpił błąd podczas instalacji'
+                pl: 'Wystąpił błąd podczas instalacji',
+                az: 'Quraşdırma zamanında xəta baş verdi'
             },
             'selected_file': {
                 tr: 'Seçilen Dosya',
@@ -1986,7 +2590,8 @@ class SteamLibraryUI {
                 it: 'File selezionato',
                 pt: 'Arquivo selecionado',
                 ko: '선택된 파일',
-                pl: 'Wybrany plik'
+                pl: 'Wybrany plik',
+                az: 'Seçilmiş Fayl'
             },
             'file_name': {
                 tr: 'Dosya Adı',
@@ -2000,7 +2605,8 @@ class SteamLibraryUI {
                 it: 'Nome file',
                 pt: 'Nome do arquivo',
                 ko: '파일 이름',
-                pl: 'Nazwa pliku'
+                pl: 'Nazwa pliku',
+                az: 'Fayl adı'
             },
             'size': {
                 tr: 'Boyut',
@@ -2014,7 +2620,8 @@ class SteamLibraryUI {
                 it: 'Dimensione',
                 pt: 'Tamanho',
                 ko: '크기',
-                pl: 'Rozmiar'
+                pl: 'Rozmiar',
+                az: 'Ölçü'
             },
             'select_another_file': {
                 tr: 'Başka Dosya Seç',
@@ -2028,7 +2635,664 @@ class SteamLibraryUI {
                 it: 'Seleziona altro file',
                 pt: 'Selecionar outro arquivo',
                 ko: '다른 파일 선택',
-                pl: 'Wybierz inny plik'
+                pl: 'Wybierz inny plik',
+                az: 'Başqa Fayl Seç'
+            },
+            'language': {
+                tr: 'Dil',
+                en: 'Language',
+                de: 'Sprache',
+                fr: 'Langue',
+                es: 'Idioma',
+                ru: 'Язык',
+                zh: '语言',
+                ja: '言語',
+                it: 'Lingua',
+                pt: 'Idioma',
+                ko: '언어',
+                pl: 'Język',
+                ar: 'اللغة',
+                az: 'Dil'
+            },
+            'lang_tr': {
+                tr: 'Türkçe',
+                en: 'Turkish',
+                de: 'Türkisch',
+                fr: 'Turc',
+                es: 'Turco',
+                ru: 'Турецкий',
+                zh: '土耳其语',
+                ja: 'トルコ語',
+                it: 'Turco',
+                pt: 'Turco',
+                ko: '터키어',
+                pl: 'Turecki',
+                ar: 'التركية',
+                az: 'Türk dili'
+            },
+            'lang_en': {
+                tr: 'İngilizce',
+                en: 'English',
+                de: 'Englisch',
+                fr: 'Anglais',
+                es: 'Inglés',
+                ru: 'Английский',
+                zh: '英语',
+                ja: '英語',
+                it: 'Inglese',
+                pt: 'Inglês',
+                ko: '영어',
+                pl: 'Angielski',
+                ar: 'الإنجليزية',
+                az: 'İngilis dili'
+            },
+            'lang_de': {
+                tr: 'Almanca',
+                en: 'German',
+                de: 'Deutsch',
+                fr: 'Allemand',
+                es: 'Alemán',
+                ru: 'Немецкий',
+                zh: '德语',
+                ja: 'ドイツ語',
+                it: 'Tedesco',
+                pt: 'Alemão',
+                ko: '독일어',
+                pl: 'Niemiecki',
+                ar: 'الألمانية',
+                az: 'Alman dili'
+            },
+            'lang_fr': {
+                tr: 'Fransızca',
+                en: 'French',
+                de: 'Französisch',
+                fr: 'Français',
+                es: 'Francés',
+                ru: 'Французский',
+                zh: '法语',
+                ja: 'フランス語',
+                it: 'Francese',
+                pt: 'Francês',
+                ko: '프랑스어',
+                pl: 'Francuski',
+                ar: 'الفرنسية',
+                az: 'Fransız dili'
+            },
+            'lang_es': {
+                tr: 'İspanyolca',
+                en: 'Spanish',
+                de: 'Spanisch',
+                fr: 'Espagnol',
+                es: 'Español',
+                ru: 'Испанский',
+                zh: '西班牙语',
+                ja: 'スペイン語',
+                it: 'Spagnolo',
+                pt: 'Espanhol',
+                ko: '스페인어',
+                pl: 'Hiszpański',
+                ar: 'الإسبانية',
+                az: 'İspan dili'
+            },
+            'lang_ru': {
+                tr: 'Rusça',
+                en: 'Russian',
+                de: 'Russisch',
+                fr: 'Russe',
+                es: 'Ruso',
+                ru: 'Русский',
+                zh: '俄语',
+                ja: 'ロシア語',
+                it: 'Russo',
+                pt: 'Russo',
+                ko: '러시아어',
+                pl: 'Rosyjski',
+                ar: 'الروسية',
+                az: 'Rus dili'
+            },
+            'lang_zh': {
+                tr: 'Çince',
+                en: 'Chinese',
+                de: 'Chinesisch',
+                fr: 'Chinois',
+                es: 'Chino',
+                ru: 'Китайский',
+                zh: '中文',
+                ja: '中国語',
+                it: 'Cinese',
+                pt: 'Chinês',
+                ko: '중국어',
+                pl: 'Chiński',
+                ar: 'الصينية',
+                az: 'Çin dili'
+            },
+            'lang_ja': {
+                tr: 'Japonca',
+                en: 'Japanese',
+                de: 'Japanisch',
+                fr: 'Japonais',
+                es: 'Japonés',
+                ru: 'Японский',
+                zh: '日语',
+                ja: '日本語',
+                it: 'Giapponese',
+                pt: 'Japonês',
+                ko: '일본어',
+                pl: 'Japoński',
+                ar: 'اليابانية',
+                az: 'Yapon dili'
+            },
+            'lang_it': {
+                tr: 'İtalyanca',
+                en: 'Italian',
+                de: 'Italienisch',
+                fr: 'Italien',
+                es: 'Italiano',
+                ru: 'Итальянский',
+                zh: '意大利语',
+                ja: 'イタリア語',
+                it: 'Italiano',
+                pt: 'Italiano',
+                ko: '이탈리아어',
+                pl: 'Włoski',
+                ar: 'الإيطالية',
+                az: 'İtalyan dili'
+            },
+            'lang_pt': {
+                tr: 'Portekizce',
+                en: 'Portuguese',
+                de: 'Portugiesisch',
+                fr: 'Portugais',
+                es: 'Portugués',
+                ru: 'Португальский',
+                zh: '葡萄牙语',
+                ja: 'ポルトガル語',
+                it: 'Portoghese',
+                pt: 'Português',
+                ko: '포르투갈어',
+                pl: 'Portugalski',
+                ar: 'البرتغالية',
+                az: 'Portuqal dili'
+            },
+            'lang_ko': {
+                tr: 'Korece',
+                en: 'Korean',
+                de: 'Koreanisch',
+                fr: 'Coréen',
+                es: 'Coreano',
+                ru: 'Корейский',
+                zh: '韩语',
+                ja: '韓国語',
+                it: 'Coreano',
+                pt: 'Coreano',
+                ko: '한국어',
+                pl: 'Koreański',
+                ar: 'الكورية',
+                az: 'Koreya dili'
+            },
+            'lang_pl': {
+                tr: 'Lehçe',
+                en: 'Polish',
+                de: 'Polnisch',
+                fr: 'Polonais',
+                es: 'Polaco',
+                ru: 'Польский',
+                zh: '波兰语',
+                ja: 'ポーランド語',
+                it: 'Polacco',
+                pt: 'Polonês',
+                ko: '폴란드어',
+                pl: 'Polski',
+                ar: 'البولندية',
+                az: 'Polyak dili'
+            },
+            'lang_ar': {
+                tr: 'Arapça',
+                en: 'Arabic',
+                de: 'Arabisch',
+                fr: 'Arabe',
+                es: 'Árabe',
+                ru: 'Арабский',
+                zh: '阿拉伯语',
+                ja: 'アラビア語',
+                it: 'Arabo',
+                pt: 'Árabe',
+                ko: '아랍어',
+                pl: 'Arabski',
+                ar: 'العربية',
+                az: 'Ərəb dili'
+            },
+            'lang_az': {
+                tr: 'Azerbaycan dili',
+                en: 'Azerbaijani',
+                de: 'Aserbaidschanisch',
+                fr: 'Azéri',
+                es: 'Azerbaiyano',
+                ru: 'Азербайджанский',
+                zh: '阿塞拜疆语',
+                ja: 'アゼルバイジャン語',
+                it: 'Azero',
+                pt: 'Azerbaijano',
+                ko: '아제르바이잔어',
+                pl: 'Azerbejdżański',
+                ar: 'الأذرية',
+                az: 'Azərbaycan dili'
+            },
+            'online_pass': {
+                tr: 'Online Pass',
+                en: 'Online Pass',
+                de: 'Online Pass',
+                fr: 'Pass en ligne',
+                es: 'Pase en línea',
+                ru: 'Онлайн пасс',
+                zh: '在线通行证',
+                ja: 'オンラインパス',
+                it: 'Pass online',
+                pt: 'Passe online',
+                ko: '온라인 패스',
+                pl: 'Pasz online',
+                ar: 'جواز المرور عبر الإنترنت',
+                az: 'Online Pass'
+            },
+            'online_add': {
+                tr: 'Online Ekle',
+                en: 'Add Online',
+                de: 'Online hinzufügen',
+                fr: 'Ajouter en ligne',
+                es: 'Agregar en línea',
+                ru: 'Добавить онлайн',
+                zh: '在线添加',
+                ja: 'オンライン追加',
+                it: 'Aggiungi online',
+                pt: 'Adicionar online',
+                ko: '온라인 추가',
+                pl: 'Dodaj online',
+                ar: 'إضافة عبر الإنترنت',
+                az: 'Online Əlavə Et'
+            },
+            'online_games_loading': {
+                tr: 'Online oyunlar yükleniyor...',
+                en: 'Loading online games...',
+                de: 'Online-Spiele werden geladen...',
+                fr: 'Chargement des jeux en ligne...',
+                es: 'Cargando juegos en línea...',
+                ru: 'Загрузка онлайн игр...',
+                zh: '正在加载在线游戏...',
+                ja: 'オンラインゲームを読み込み中...',
+                it: 'Caricamento giochi online...',
+                pt: 'Carregando jogos online...',
+                ko: '온라인 게임 로딩 중...',
+                pl: 'Ładowanie gier online...',
+                ar: 'جاري تحميل الألعاب عبر الإنترنت...',
+                az: 'Online oyunlar yüklənir...'
+            },
+            'online_games_load_failed': {
+                tr: 'Online oyunlar yüklenemedi',
+                en: 'Failed to load online games',
+                de: 'Online-Spiele konnten nicht geladen werden',
+                fr: 'Échec du chargement des jeux en ligne',
+                es: 'Error al cargar juegos en línea',
+                ru: 'Не удалось загрузить онлайн игры',
+                zh: '无法加载在线游戏',
+                ja: 'オンラインゲームの読み込みに失敗しました',
+                it: 'Impossibile caricare i giochi online',
+                pt: 'Falha ao carregar jogos online',
+                ko: '온라인 게임 로드 실패',
+                pl: 'Nie udało się załadować gier online',
+                ar: 'فشل في تحميل الألعاب عبر الإنترنت',
+                az: 'Online oyunlar yüklənə bilmədi'
+            },
+            'no_online_games': {
+                tr: 'Hiç online oyun bulunamadı',
+                en: 'No online games found',
+                de: 'Keine Online-Spiele gefunden',
+                fr: 'Aucun jeu en ligne trouvé',
+                es: 'No se encontraron juegos en línea',
+                ru: 'Онлайн игры не найдены',
+                zh: '未找到在线游戏',
+                ja: 'オンラインゲームが見つかりません',
+                it: 'Nessun gioco online trovato',
+                pt: 'Nenhum jogo online encontrado',
+                ko: '온라인 게임을 찾을 수 없음',
+                pl: 'Nie znaleziono gier online',
+                ar: 'لم يتم العثور على ألعاب عبر الإنترنت',
+                az: 'Heç bir online oyun tapılmadı'
+            },
+            'previous_page': {
+                tr: '← Önceki',
+                en: '← Previous',
+                de: '← Zurück',
+                fr: '← Précédent',
+                es: '← Anterior',
+                ru: '← Предыдущая',
+                zh: '← 上一页',
+                ja: '← 前へ',
+                it: '← Precedente',
+                pt: '← Anterior',
+                ko: '← 이전',
+                pl: '← Poprzednia',
+                ar: '← السابق',
+                az: '← Əvvəlki'
+            },
+            'next_page': {
+                tr: 'Sonraki →',
+                en: 'Next →',
+                de: 'Weiter →',
+                fr: 'Suivant →',
+                es: 'Siguiente →',
+                ru: 'Следующая →',
+                zh: '下一页 →',
+                ja: '次へ →',
+                it: 'Successivo →',
+                pt: 'Próximo →',
+                ko: '다음 →',
+                pl: 'Następna →',
+                ar: 'التالي →',
+                az: 'Sonrakı →'
+            },
+            'page_info': {
+                tr: 'Sayfa {current} / {total} ({count} oyun)',
+                en: 'Page {current} / {total} ({count} games)',
+                de: 'Seite {current} / {total} ({count} Spiele)',
+                fr: 'Page {current} / {total} ({count} jeux)',
+                es: 'Página {current} / {total} ({count} juegos)',
+                ru: 'Страница {current} / {total} ({count} игр)',
+                zh: '第 {current} / {total} 页 ({count} 个游戏)',
+                ja: 'ページ {current} / {total} ({count} ゲーム)',
+                it: 'Pagina {current} / {total} ({count} giochi)',
+                pt: 'Página {current} / {total} ({count} jogos)',
+                ko: '페이지 {current} / {total} ({count} 게임)',
+                pl: 'Strona {current} / {total} ({count} gier)',
+                ar: 'الصفحة {current} / {total} ({count} لعبة)',
+                az: 'Səhifə {current} / {total} ({count} oyun)'
+            },
+            'download_failed': {
+                tr: 'İndirme başarısız',
+                en: 'Download failed',
+                de: 'Download fehlgeschlagen',
+                fr: 'Échec du téléchargement',
+                es: 'Error en la descarga',
+                ru: 'Ошибка загрузки',
+                zh: '下载失败',
+                ja: 'ダウンロードに失敗しました',
+                it: 'Download fallito',
+                pt: 'Falha no download',
+                ko: '다운로드 실패',
+                pl: 'Pobieranie nie powiodło się',
+                ar: 'فشل التحميل',
+                az: 'Yükləmə uğursuz oldu'
+            },
+            'steam_page': {
+                tr: 'Steam Sayfası',
+                en: 'Steam Page',
+                de: 'Steam-Seite',
+                fr: 'Page Steam',
+                es: 'Página de Steam',
+                ru: 'Страница Steam',
+                zh: 'Steam页面',
+                ja: 'Steamページ',
+                it: 'Pagina Steam',
+                pt: 'Página Steam',
+                ko: 'Steam 페이지',
+                pl: 'Strona Steam',
+                ar: 'صفحة Steam',
+                az: 'Steam Səhifəsi'
+            },
+            'game_id': {
+                tr: 'Oyun ID',
+                en: 'Game ID',
+                de: 'Spiel-ID',
+                fr: 'ID du jeu',
+                es: 'ID del juego',
+                ru: 'ID игры',
+                zh: '游戏ID',
+                ja: 'ゲームID',
+                it: 'ID gioco',
+                pt: 'ID do jogo',
+                ko: '게임 ID',
+                pl: 'ID gry',
+                ar: 'معرف اللعبة',
+                az: 'Oyun ID'
+            },
+            'manual_install_required': {
+                tr: 'Manuel Kurulum Gerekli',
+                en: 'Manual Installation Required',
+                de: 'Manuelle Installation erforderlich',
+                fr: 'Installation manuelle requise',
+                es: 'Instalación manual requerida',
+                ru: 'Требуется ручная установка',
+                zh: '需要手动安装',
+                ja: '手動インストールが必要',
+                it: 'Installazione manuale richiesta',
+                pt: 'Instalação manual necessária',
+                ko: '수동 설치 필요',
+                pl: 'Wymagana instalacja ręczna',
+                ar: 'التثبيت اليدوي مطلوب',
+                az: 'Manual Quraşdırma Tələb Olunur'
+            },
+            'game_downloaded_successfully': {
+                tr: 'Oyun Başarıyla İndirildi!',
+                en: 'Game Downloaded Successfully!',
+                de: 'Spiel erfolgreich heruntergeladen!',
+                fr: 'Jeu téléchargé avec succès !',
+                es: '¡Juego descargado exitosamente!',
+                ru: 'Игра успешно загружена!',
+                zh: '游戏下载成功！',
+                ja: 'ゲームが正常にダウンロードされました！',
+                it: 'Gioco scaricato con successo!',
+                pt: 'Jogo baixado com sucesso!',
+                ko: '게임이 성공적으로 다운로드되었습니다!',
+                pl: 'Gra została pomyślnie pobrana!',
+                ar: 'تم تحميل اللعبة بنجاح!',
+                az: 'Oyun Uğurla Endirildi!'
+            },
+            'manual_install_steps': {
+                tr: 'Manuel Kurulum Adımları:',
+                en: 'Manual Installation Steps:',
+                de: 'Schritte zur manuellen Installation:',
+                fr: 'Étapes d\'installation manuelle :',
+                es: 'Pasos de instalación manual:',
+                ru: 'Шаги ручной установки:',
+                zh: '手动安装步骤：',
+                ja: '手動インストールの手順：',
+                it: 'Passi per l\'installazione manuale:',
+                pt: 'Passos da instalação manual:',
+                ko: '수동 설치 단계:',
+                pl: 'Kroki instalacji ręcznej:',
+                ar: 'خطوات التثبيت اليدوي:',
+                az: 'Manual Quraşdırma Addımları:'
+            },
+            'find_downloaded_zip': {
+                tr: 'İndirilen ZIP dosyasını bulun',
+                en: 'Find the downloaded ZIP file',
+                de: 'Finden Sie die heruntergeladene ZIP-Datei',
+                fr: 'Trouvez le fichier ZIP téléchargé',
+                es: 'Encuentra el archivo ZIP descargado',
+                ru: 'Найдите загруженный ZIP файл',
+                zh: '找到下载的ZIP文件',
+                ja: 'ダウンロードしたZIPファイルを見つける',
+                it: 'Trova il file ZIP scaricato',
+                pt: 'Encontre o arquivo ZIP baixado',
+                ko: '다운로드된 ZIP 파일을 찾으세요',
+                pl: 'Znajdź pobrany plik ZIP',
+                ar: 'ابحث عن ملف ZIP المحمل',
+                az: 'Endirilən ZIP faylını tapın'
+            },
+            'right_click_extract': {
+                tr: 'ZIP dosyasını sağ tıklayın ve "Ayıkla" seçin',
+                en: 'Right-click the ZIP file and select "Extract"',
+                de: 'Klicken Sie mit der rechten Maustaste auf die ZIP-Datei und wählen Sie "Extrahieren"',
+                fr: 'Clic droit sur le fichier ZIP et sélectionnez "Extraire"',
+                es: 'Haz clic derecho en el archivo ZIP y selecciona "Extraer"',
+                ru: 'Щелкните правой кнопкой мыши по ZIP файлу и выберите "Извлечь"',
+                zh: '右键单击ZIP文件并选择"解压"',
+                ja: 'ZIPファイルを右クリックして「展開」を選択',
+                it: 'Fai clic destro sul file ZIP e seleziona "Estrai"',
+                pt: 'Clique com o botão direito no arquivo ZIP e selecione "Extrair"',
+                ko: 'ZIP 파일을 우클릭하고 "압축 해제"를 선택하세요',
+                pl: 'Kliknij prawym przyciskiem myszy na plik ZIP i wybierz "Wyodrębnij"',
+                ar: 'انقر بزر الماوس الأيمن على ملف ZIP واختر "استخراج"',
+                az: 'ZIP faylına sağ klikləyin və "Çıxar" seçin'
+            },
+            'zip_password': {
+                tr: 'ZIP şifresi:',
+                en: 'ZIP password:',
+                de: 'ZIP-Passwort:',
+                fr: 'Mot de passe ZIP :',
+                es: 'Contraseña ZIP:',
+                ru: 'Пароль ZIP:',
+                zh: 'ZIP密码：',
+                ja: 'ZIPパスワード：',
+                it: 'Password ZIP:',
+                pt: 'Senha ZIP:',
+                ko: 'ZIP 비밀번호:',
+                pl: 'Hasło ZIP:',
+                ar: 'كلمة مرور ZIP:',
+                az: 'ZIP şifrəsi:'
+            },
+            'open_extracted_folder': {
+                tr: 'Ayıklanan klasörü açın',
+                en: 'Open the extracted folder',
+                de: 'Öffnen Sie den extrahierten Ordner',
+                fr: 'Ouvrez le dossier extrait',
+                es: 'Abre la carpeta extraída',
+                ru: 'Откройте извлеченную папку',
+                zh: '打开解压后的文件夹',
+                ja: '展開されたフォルダを開く',
+                it: 'Apri la cartella estratta',
+                pt: 'Abra a pasta extraída',
+                ko: '압축 해제된 폴더를 여세요',
+                pl: 'Otwórz wyodrębniony folder',
+                ar: 'افتح المجلد المستخرج',
+                az: 'Çıxarılan qovluğu açın'
+            },
+            'copy_game_files': {
+                tr: 'Oyun dosyalarını istediğiniz konuma kopyalayın',
+                en: 'Copy game files to your desired location',
+                de: 'Kopieren Sie die Spieldateien an Ihren gewünschten Ort',
+                fr: 'Copiez les fichiers du jeu à l\'emplacement souhaité',
+                es: 'Copia los archivos del juego a tu ubicación deseada',
+                ru: 'Скопируйте файлы игры в нужное место',
+                zh: '将游戏文件复制到您想要的位置',
+                ja: 'ゲームファイルを希望の場所にコピー',
+                it: 'Copia i file del gioco nella posizione desiderata',
+                pt: 'Copie os arquivos do jogo para o local desejado',
+                ko: '게임 파일을 원하는 위치에 복사하세요',
+                pl: 'Skopiuj pliki gry do żądanej lokalizacji',
+                ar: 'انسخ ملفات اللعبة إلى الموقع المطلوب',
+                az: 'Oyun fayllarını istədiyiniz yerə kopyalayın'
+            },
+            'run_exe_file': {
+                tr: 'Oyunu başlatmak için .exe dosyasını çalıştırın',
+                en: 'Run the .exe file to start the game',
+                de: 'Führen Sie die .exe-Datei aus, um das Spiel zu starten',
+                fr: 'Exécutez le fichier .exe pour démarrer le jeu',
+                es: 'Ejecuta el archivo .exe para iniciar el juego',
+                ru: 'Запустите .exe файл для запуска игры',
+                zh: '运行.exe文件启动游戏',
+                ja: '.exeファイルを実行してゲームを開始',
+                it: 'Esegui il file .exe per avviare il gioco',
+                pt: 'Execute o arquivo .exe para iniciar o jogo',
+                ko: '.exe 파일을 실행하여 게임을 시작하세요',
+                pl: 'Uruchom plik .exe, aby uruchomić grę',
+                ar: 'شغل ملف .exe لبدء اللعبة',
+                az: 'Oyunu başlatmaq üçün .exe faylını işə salın'
+            },
+            'important_notes': {
+                tr: 'Önemli Notlar:',
+                en: 'Important Notes:',
+                de: 'Wichtige Hinweise:',
+                fr: 'Notes importantes :',
+                es: 'Notas importantes:',
+                ru: 'Важные замечания:',
+                zh: '重要提示：',
+                ja: '重要な注意事項：',
+                it: 'Note importanti:',
+                pt: 'Notas importantes:',
+                ko: '중요한 참고사항:',
+                pl: 'Ważne uwagi:',
+                ar: 'ملاحظات مهمة:',
+                az: 'Vacib Qeydlər:'
+            },
+            'antivirus_warning': {
+                tr: 'Antivirüs programınız oyunu yanlış algılayabilir',
+                en: 'Your antivirus may incorrectly detect the game',
+                de: 'Ihr Antivirus könnte das Spiel fälschlicherweise erkennen',
+                fr: 'Votre antivirus peut détecter incorrectement le jeu',
+                es: 'Tu antivirus puede detectar incorrectamente el juego',
+                ru: 'Ваш антивирус может неправильно определить игру',
+                zh: '您的杀毒软件可能会误报游戏',
+                ja: 'アンチウイルスがゲームを誤検知する可能性があります',
+                it: 'Il tuo antivirus potrebbe rilevare erroneamente il gioco',
+                pt: 'Seu antivírus pode detectar incorretamente o jogo',
+                ko: '바이러스 백신이 게임을 잘못 감지할 수 있습니다',
+                pl: 'Twój program antywirusowy może błędnie wykryć grę',
+                ar: 'قد يكتشف برنامج مكافحة الفيروسات اللعبة بشكل خاطئ',
+                az: 'Antivirus proqramınız oyunu səhv aşkarlaya bilər'
+            },
+            'mark_as_trusted': {
+                tr: 'Bu durumda oyunu güvenilir olarak işaretleyin',
+                en: 'In this case, mark the game as trusted',
+                de: 'Markieren Sie in diesem Fall das Spiel als vertrauenswürdig',
+                fr: 'Dans ce cas, marquez le jeu comme fiable',
+                es: 'En este caso, marca el juego como confiable',
+                ru: 'В этом случае отметьте игру как доверенную',
+                zh: '在这种情况下，将游戏标记为可信',
+                ja: 'この場合、ゲームを信頼できるものとしてマークしてください',
+                it: 'In questo caso, contrassegna il gioco come attendibile',
+                pt: 'Neste caso, marque o jogo como confiável',
+                ko: '이 경우 게임을 신뢰할 수 있는 것으로 표시하세요',
+                pl: 'W takim przypadku oznacz grę jako zaufaną',
+                ar: 'في هذه الحالة، حدد اللعبة كموثوقة',
+                az: 'Bu halda oyunu etibarlı olaraq qeyd edin'
+            },
+            'visual_cpp_redistributable': {
+                tr: 'Oyun çalışmazsa Visual C++ Redistributable yükleyin',
+                en: 'If the game doesn\'t work, install Visual C++ Redistributable',
+                de: 'Wenn das Spiel nicht funktioniert, installieren Sie Visual C++ Redistributable',
+                fr: 'Si le jeu ne fonctionne pas, installez Visual C++ Redistributable',
+                es: 'Si el juego no funciona, instala Visual C++ Redistributable',
+                ru: 'Если игра не работает, установите Visual C++ Redistributable',
+                zh: '如果游戏无法运行，请安装Visual C++ Redistributable',
+                ja: 'ゲームが動作しない場合は、Visual C++ Redistributableをインストールしてください',
+                it: 'Se il gioco non funziona, installa Visual C++ Redistributable',
+                pt: 'Se o jogo não funcionar, instale o Visual C++ Redistributable',
+                ko: '게임이 작동하지 않으면 Visual C++ Redistributable을 설치하세요',
+                pl: 'Jeśli gra nie działa, zainstaluj Visual C++ Redistributable',
+                ar: 'إذا لم تعمل اللعبة، قم بتثبيت Visual C++ Redistributable',
+                az: 'Oyun işləməsə Visual C++ Redistributable yükləyin'
+            },
+            'directx_updates': {
+                tr: 'DirectX güncellemeleri gerekebilir',
+                en: 'DirectX updates may be required',
+                de: 'DirectX-Updates könnten erforderlich sein',
+                fr: 'Les mises à jour DirectX peuvent être nécessaires',
+                es: 'Pueden ser necesarias actualizaciones de DirectX',
+                ru: 'Могут потребоваться обновления DirectX',
+                zh: '可能需要DirectX更新',
+                ja: 'DirectXの更新が必要な場合があります',
+                it: 'Potrebbero essere necessari aggiornamenti DirectX',
+                pt: 'Atualizações do DirectX podem ser necessárias',
+                ko: 'DirectX 업데이트가 필요할 수 있습니다',
+                pl: 'Może być wymagane aktualizacja DirectX',
+                ar: 'قد تكون تحديثات DirectX مطلوبة',
+                az: 'DirectX yeniləmələri tələb oluna bilər'
+            },
+            'understood_close': {
+                tr: 'Anladım, Kapat',
+                en: 'Understood, Close',
+                de: 'Verstanden, Schließen',
+                fr: 'Compris, Fermer',
+                es: 'Entendido, Cerrar',
+                ru: 'Понятно, Закрыть',
+                zh: '明白了，关闭',
+                ja: '理解しました、閉じる',
+                it: 'Capito, Chiudi',
+                pt: 'Entendido, Fechar',
+                ko: '이해했습니다, 닫기',
+                pl: 'Rozumiem, Zamknij',
+                ar: 'فهمت، إغلاق',
+                az: 'Başa düşdüm, Bağla'
             }
         };
         return dict[key] && dict[key][lang] ? dict[key][lang] : dict[key]?.tr || key;
@@ -2038,11 +3302,10 @@ class SteamLibraryUI {
         const settingsContainer = document.getElementById('settings-page');
         if (!settingsContainer) return;
         settingsContainer.innerHTML = `
-            <div class="settings-title">${this.translate('settings')}</div>
             <div class="language-select-label">${this.translate('language')}</div>
             <div class="language-select-list">
                 ${Object.keys(languageFlagUrls).map(lang => `
-                    <button class="lang-btn${this.getSelectedLang()===lang?' selected':''}" onclick="ui.setCurrentLanguage('${lang}')">
+                    <button class="lang-btn${this.getSelectedLang()===lang?' selected':''}" data-lang="${lang}">
                         <img class="flag" src="${languageFlagUrls[lang]}" alt="${lang} flag" width="28" height="20" style="border-radius:4px;box-shadow:0 1px 4px #0002;vertical-align:middle;" />
                         <span class="lang-name">${this.translate('lang_' + lang)}</span>
                     </button>
@@ -2060,13 +3323,30 @@ class SteamLibraryUI {
                 </label>
             </div>
         `;
+        
+        // Dil seçici butonları için event listener'lar
+        const langBtns = settingsContainer.querySelectorAll('.lang-btn');
+        langBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const lang = btn.dataset.lang;
+                this.setCurrentLanguage(lang);
+            });
+        });
+        
         // Toggle eventleri
-        document.getElementById('discordRPCToggle').addEventListener('change', (e) => {
-            this.updateConfig({ discordRPC: e.target.checked });
-        });
-        document.getElementById('videoMutedToggle').addEventListener('change', (e) => {
-            this.updateConfig({ videoMuted: e.target.checked });
-        });
+        const discordToggle = document.getElementById('discordRPCToggle');
+        if (discordToggle) {
+            discordToggle.addEventListener('change', (e) => {
+                this.updateConfig({ discordRPC: e.target.checked });
+            });
+        }
+        
+        const videoToggle = document.getElementById('videoMutedToggle');
+        if (videoToggle) {
+            videoToggle.addEventListener('change', (e) => {
+                this.updateConfig({ videoMuted: e.target.checked });
+            });
+        }
     }
 
     setCurrentLanguage(lang) {
@@ -2089,7 +3369,7 @@ class SteamLibraryUI {
         }
         // Oyun dosyası API kontrolü (404 ise oyun yok)
         try {
-            const res = await fetch(`https://muhammetdag.com/api/v1/game.php?steamid=${appId}`);
+            const res = await fetch(`https://api.muhammetdag.com/steamlib/game/game.php?steamid=${appId}`);
             if (res.status === 404) {
                 this.showNotification('error', 'game_not_found', 'error');
                 return;
@@ -2119,13 +3399,16 @@ class SteamLibraryUI {
         const lang = this.getSelectedLang();
         const onlineGrid = document.getElementById('onlinePassPage');
         if (!onlineGrid) return;
-        onlineGrid.innerHTML = `<div class='page-header' style='width:100%;display:flex;justify-content:center;align-items:center;margin-bottom:24px;'><h1 style='font-size:2.2rem;font-weight:800;color:#00bfff;display:inline-block;'>Online Pass</h1></div><div style="color:#fff;padding:16px;">Yükleniyor...</div>`;
+        onlineGrid.innerHTML = `<div class='page-header' style='width:100%;display:flex;justify-content:center;align-items:center;margin-bottom:24px;'><h1 style='font-size:2.2rem;font-weight:800;color:#00bfff;display:inline-block;'>${this.translate('online_pass')}</h1></div><div style="color:#fff;padding:16px;">${this.translate('online_games_loading')}</div>`;
         try {
-            const res = await fetch('https://muhammetdag.com/api/v1/onlineliste.php');
+            // Yeni API endpoint'ini kullan
+            const res = await fetch('https://api.muhammetdag.com/steamlib/online/online_fix_games.json');
             const data = await res.json();
-            if (!data.files || !Array.isArray(data.files)) throw new Error('Online oyun listesi alınamadı');
-            this.onlinePassGames = data.files;
-            this.onlinePassFilteredGames = data.files;
+            if (!Array.isArray(data)) throw new Error('Online oyun listesi alınamadı');
+            
+            // Oyunları appid'ye göre düzenle
+            this.onlinePassGames = data.map(game => game.appid);
+            this.onlinePassFilteredGames = this.onlinePassGames;
             this.onlinePassCurrentPage = 0;
             
             // Oyun isimlerini önbellekle
@@ -2133,7 +3416,7 @@ class SteamLibraryUI {
             
             this.renderOnlinePassGames();
         } catch (err) {
-            onlineGrid.innerHTML = `<div style='color:#fff;padding:16px;'>Online oyunlar yüklenemedi: ${err.message}</div>`;
+            onlineGrid.innerHTML = `<div style='color:#fff;padding:16px;'>${this.translate('online_games_load_failed')}: ${err.message}</div>`;
         }
     }
 
@@ -2144,12 +3427,12 @@ class SteamLibraryUI {
         if (!onlineGrid) return;
         
         // Sayfa başlığını oluştur
-        onlineGrid.innerHTML = `<div class='page-header' style='width:100%;display:flex;justify-content:center;align-items:center;margin-bottom:24px;'><h1 style='font-size:2.2rem;font-weight:800;color:#00bfff;display:inline-block;'>Online Pass</h1></div>`;
+        onlineGrid.innerHTML = `<div class='page-header' style='width:100%;display:flex;justify-content:center;align-items:center;margin-bottom:24px;'><h1 style='font-size:2.2rem;font-weight:800;color:#00bfff;display:inline-block;'>${this.translate('online_pass')}</h1></div>`;
         
         // Filtrelenmiş oyunları kullan (list parametresi artık kullanılmıyor)
         const games = this.onlinePassFilteredGames;
         if (!games || games.length === 0) {
-            onlineGrid.innerHTML += `<div style='color:#fff;padding:16px;'>Hiç online oyun bulunamadı.</div>`;
+            onlineGrid.innerHTML += `<div style='color:#fff;padding:16px;'>${this.translate('no_online_games')}.</div>`;
             return;
         }
         
@@ -2161,13 +3444,8 @@ class SteamLibraryUI {
         
         // Oyun grid'ini oluştur
         const grid = document.createElement('div');
-        grid.style.display = 'grid';
-        grid.style.gridTemplateColumns = 'repeat(auto-fit, 300px)';
-        grid.style.justifyContent = 'center';
-        grid.style.gap = '24px';
+        grid.className = 'online-pass-grid';
         grid.style.padding = '24px 0 0 0';
-        grid.style.maxWidth = '100%';
-        grid.style.margin = '0';
         
         // Oyun kartlarını asenkron olarak oluştur
         const createGameCard = async (gameId) => {
@@ -2180,7 +3458,7 @@ class SteamLibraryUI {
             
             try {
                 // Steam API'den oyun bilgilerini çek
-                const steamResponse = await fetch(`https://store.steampowered.com/api/appdetails?appids=${gameId}&l=turkish`);
+                const steamResponse = await safeSteamFetch(`https://store.steampowered.com/api/appdetails?appids=${gameId}&l=turkish`);
                 const steamData = await steamResponse.json();
                 
                 let gameName = `Oyun ID: ${gameId}`;
@@ -2199,10 +3477,10 @@ class SteamLibraryUI {
                     <div class="game-info" style="padding:12px;">
                         <h3 class="game-title" style="font-size:18px;font-weight:700;margin-bottom:4px;">${gameName}</h3>
                         <div class="game-meta" style="margin-bottom:6px;">
-                            <span style="color:#00bfff;font-size:12px;">Online Pass</span>
+                            <span style="color:#00bfff;font-size:12px;">${this.translate('online_pass')}</span>
                         </div>
-                        <button class="game-btn primary" style="width:100%;margin-top:8px;" data-online-add data-appid="${gameId}">Online Ekle</button>
-                        <button class="game-btn secondary" style="width:100%;margin-top:8px;background:#222;color:#00bfff;border:1px solid #00bfff;" onclick="event.stopPropagation(); window.open('${steamUrl}','_blank')">Steam Sayfası</button>
+                        <button class="game-btn primary" style="width:100%;margin-top:8px;" onclick="ui.downloadOnlineGame(${gameId})">${this.translate('online_add')}</button>
+                        <button class="game-btn secondary" style="width:100%;margin-top:8px;background:#222;color:#00bfff;border:1px solid #00bfff;" onclick="event.stopPropagation(); window.open('${steamUrl}','_blank')">${this.translate('steam_page')}</button>
                     </div>
                 `;
             } catch (error) {
@@ -2213,12 +3491,12 @@ class SteamLibraryUI {
                 card.innerHTML = `
                     <img src="${imageUrl}" alt="Game ${gameId}" class="game-image" loading="lazy" style="width:100%;height:160px;object-fit:cover;border-radius:12px 12px 0 0;" onerror="this.src='https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok'">
                     <div class="game-info" style="padding:12px;">
-                        <h3 class="game-title" style="font-size:18px;font-weight:700;margin-bottom:4px;">Oyun ID: ${gameId}</h3>
+                        <h3 class="game-title" style="font-size:18px;font-weight:700;margin-bottom:4px;">${this.translate('game_id')}: ${gameId}</h3>
                         <div class="game-meta" style="margin-bottom:6px;">
-                            <span style="color:#00bfff;font-size:12px;">Online Pass</span>
+                            <span style="color:#00bfff;font-size:12px;">${this.translate('online_pass')}</span>
                         </div>
-                        <button class="game-btn primary" style="width:100%;margin-top:8px;" data-online-add data-appid="${gameId}">Online Ekle</button>
-                        <button class="game-btn secondary" style="width:100%;margin-top:8px;background:#222;color:#00bfff;border:1px solid #00bfff;" onclick="event.stopPropagation(); window.open('${steamUrl}','_blank')">Steam Sayfası</button>
+                        <button class="game-btn primary" style="width:100%;margin-top:8px;" onclick="ui.downloadOnlineGame(${gameId})">${this.translate('online_add')}</button>
+                        <button class="game-btn secondary" style="width:100%;margin-top:8px;background:#222;color:#00bfff;border:1px solid #00bfff;" onclick="event.stopPropagation(); window.open('${steamUrl}','_blank')">${this.translate('steam_page')}</button>
                     </div>
                 `;
             }
@@ -2247,7 +3525,7 @@ class SteamLibraryUI {
             
             // Önceki sayfa butonu
             const prevBtn = document.createElement('button');
-            prevBtn.textContent = '← Önceki';
+            prevBtn.textContent = this.translate('previous_page');
             prevBtn.style.padding = '8px 16px';
             prevBtn.style.background = this.onlinePassCurrentPage > 0 ? '#00bfff' : '#444';
             prevBtn.style.color = '#fff';
@@ -2263,13 +3541,17 @@ class SteamLibraryUI {
             
             // Sayfa bilgisi
             const pageInfo = document.createElement('span');
-            pageInfo.textContent = `Sayfa ${this.onlinePassCurrentPage + 1} / ${totalPages} (${games.length} oyun)`;
+            const pageInfoText = this.translate('page_info')
+                .replace('{current}', this.onlinePassCurrentPage + 1)
+                .replace('{total}', totalPages)
+                .replace('{count}', games.length);
+            pageInfo.textContent = pageInfoText;
             pageInfo.style.color = '#fff';
             pageInfo.style.fontSize = '14px';
             
             // Sonraki sayfa butonu
             const nextBtn = document.createElement('button');
-            nextBtn.textContent = 'Sonraki →';
+            nextBtn.textContent = this.translate('next_page');
             nextBtn.style.padding = '8px 16px';
             nextBtn.style.background = this.onlinePassCurrentPage < totalPages - 1 ? '#00bfff' : '#444';
             nextBtn.style.color = '#fff';
@@ -2289,21 +3571,7 @@ class SteamLibraryUI {
             onlineGrid.appendChild(paginationContainer);
         }
         
-        // Online Ekle butonlarına event listener ekle
-        document.querySelectorAll('button[data-online-add]').forEach((btn) => {
-            btn.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                const appId = btn.getAttribute('data-appid');
-                if (!appId) return;
-                
-                // Ana sürece dosya indirme isteği gönder
-                try {
-                    await ipcRenderer.invoke('download-online-file', appId);
-                } catch (err) {
-                    ui.showNotification('error', 'İndirme başarısız: ' + (err.message || err), 'error');
-                }
-            });
-        });
+
     }
 
     getCurrentPage() {
@@ -2312,9 +3580,115 @@ class SteamLibraryUI {
         return active.id.replace('Page', '');
     }
 
+    async downloadOnlineGame(appId) {
+        try {
+            this.showLoading();
+            this.showNotification('info', 'Dosya indiriliyor...', 'info');
+            
+            // Ana sürece dosya indirme isteği gönder
+            await ipcRenderer.invoke('download-online-file', appId);
+            
+            // İndirme başarılı olduğunda bilgilendirme mesajı göster
+            this.showManualInstallInfo();
+            
+            this.showNotification('success', this.translate('download_success'), 'success');
+        } catch (err) {
+            console.error('Download error:', err);
+            
+            // Hata mesajını daha detaylı göster
+            let errorMessage = err.message || err;
+            
+            if (errorMessage.includes('ZIP ayıklama başarısız')) {
+                errorMessage = 'ZIP dosyası ayıklanamadı. Dosya bozuk olabilir.';
+            } else if (errorMessage.includes('Dosya indirme hatası')) {
+                errorMessage = 'Dosya indirilemedi. İnternet bağlantınızı kontrol edin.';
+            }
+            
+            this.showNotification('error', errorMessage, 'error');
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    showManualInstallInfo() {
+        // Manuel kurulum bilgilendirme modal'ı oluştur
+        const modalHtml = `
+            <div class="modal-overlay active" id="manualInstallInfoModal">
+                <div class="modal-container">
+                    <div class="modal-header">
+                        <h2>${this.translate('manual_install_required')}</h2>
+                        <button class="modal-close" onclick="ui.closeManualInstallInfo()">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="modal-content">
+                        <div style="text-align: center; margin-bottom: 20px;">
+                            <div style="font-size: 48px; margin-bottom: 10px;">📦</div>
+                            <h3 style="color: #00bfff; margin-bottom: 15px;">${this.translate('game_downloaded_successfully')}</h3>
+                        </div>
+                        
+                        <div style="background: rgba(0, 191, 255, 0.1); border: 1px solid #00bfff; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+                            <h4 style="color: #00bfff; margin-bottom: 10px;">📋 ${this.translate('manual_install_steps')}</h4>
+                            <ol style="text-align: left; margin: 0; padding-left: 20px;">
+                                <li>${this.translate('find_downloaded_zip')}</li>
+                                <li>${this.translate('right_click_extract')}</li>
+                                <li><strong>${this.translate('zip_password')} <span style="color: #00bfff; font-weight: bold;">online-fix.me</span></strong></li>
+                                <li>${this.translate('open_extracted_folder')}</li>
+                                <li>${this.translate('copy_game_files')}</li>
+                                <li>${this.translate('run_exe_file')}</li>
+                            </ol>
+                        </div>
+                        
+                        <div style="background: rgba(255, 193, 7, 0.1); border: 1px solid #ffc107; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+                            <h4 style="color: #ffc107; margin-bottom: 10px;">⚠️ ${this.translate('important_notes')}</h4>
+                            <ul style="text-align: left; margin: 0; padding-left: 20px;">
+                                <li>${this.translate('antivirus_warning')}</li>
+                                <li>${this.translate('mark_as_trusted')}</li>
+                                <li>${this.translate('visual_cpp_redistributable')}</li>
+                                <li>${this.translate('directx_updates')}</li>
+                            </ul>
+                        </div>
+                        
+                        <div style="text-align: center;">
+                            <button class="btn btn-primary" onclick="ui.closeManualInstallInfo()" style="background: #00bfff; border: none; padding: 12px 24px; border-radius: 6px; color: white; font-weight: bold; cursor: pointer;">
+                                ${this.translate('understood_close')}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Modal'ı sayfaya ekle
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        
+        // Modal'ı kapatmak için ESC tuşu
+        const modal = document.getElementById('manualInstallInfoModal');
+        modal.onkeydown = (e) => {
+            if (e.key === 'Escape') {
+                this.closeManualInstallInfo();
+            }
+        };
+        
+        // Modal'a focus ver
+        setTimeout(() => { modal.focus && modal.focus(); }, 200);
+    }
+
+    closeManualInstallInfo() {
+        const modal = document.getElementById('manualInstallInfoModal');
+        if (modal) {
+            modal.remove();
+        }
+    }
+
+
+
     async getGameImageUrl(appId, gameName) {
         // Önce CDN'den görsel almaya çalış (daha hızlı)
-        const cdnUrl = `https://cdn.akamai.steamstatic.com/steam/apps/${appId}/capsule_616x353.jpg`;
+        const cdnUrl = `https://cdn.akamai.steamstatic.com/steam/apps/${appId}/header.jpg`;
         
         try {
             const imgResponse = await fetch(cdnUrl, { method: 'HEAD' });
@@ -2327,7 +3701,7 @@ class SteamLibraryUI {
         
         // CDN'den alamazsa Steam API'den dene
         try {
-            const response = await fetch(`https://store.steampowered.com/api/appdetails?appids=${appId}`);
+            const response = await safeSteamFetch(`https://store.steampowered.com/api/appdetails?appids=${appId}`);
             const data = await response.json();
             
             if (data[appId] && data[appId].success && data[appId].data) {
@@ -2636,24 +4010,105 @@ class SteamLibraryUI {
         // Tüm oyun isimlerini paralel olarak çek
         const promises = this.onlinePassGames.map(async (gameId) => {
             try {
-                const steamResponse = await fetch(`https://store.steampowered.com/api/appdetails?appids=${gameId}&l=turkish`);
+                const steamResponse = await safeSteamFetch(`https://store.steampowered.com/api/appdetails?appids=${gameId}&l=turkish`);
                 const steamData = await steamResponse.json();
                 
                 if (steamData[gameId] && steamData[gameId].success && steamData[gameId].data) {
                     const gameData = steamData[gameId].data;
-                    this.onlinePassGameNames[gameId] = gameData.name || `Oyun ID: ${gameId}`;
+                    this.onlinePassGameNames[gameId] = gameData.name || `${this.translate('game_id')}: ${gameId}`;
                 } else {
-                    this.onlinePassGameNames[gameId] = `Oyun ID: ${gameId}`;
+                    this.onlinePassGameNames[gameId] = `${this.translate('game_id')}: ${gameId}`;
                 }
             } catch (error) {
                 console.error('Error caching game name:', error);
-                this.onlinePassGameNames[gameId] = `Oyun ID: ${gameId}`;
+                this.onlinePassGameNames[gameId] = `${this.translate('game_id')}: ${gameId}`;
             }
         });
         
         await Promise.all(promises);
     }
+
+    // Test ZIP extraction function - Debugging için
+    async testZipExtraction(zipPath, targetDir) {
+      try {
+        console.log('Testing ZIP extraction...');
+        console.log('ZIP Path:', zipPath);
+        console.log('Target Directory:', targetDir);
+        
+        const result = await ipcRenderer.invoke('test-zip-extraction', zipPath, targetDir);
+        
+        if (result.success) {
+          this.showNotification('success', 'ZIP extraction test successful!', 'success');
+          console.log('Test result:', result);
+        } else {
+          this.showNotification('error', `ZIP extraction test failed: ${result.error}`, 'error');
+          console.error('Test result:', result);
+        }
+        
+        return result;
+      } catch (error) {
+        console.error('Test function error:', error);
+        this.showNotification('error', `Test function error: ${error.message}`, 'error');
+        return { success: false, error: error.message };
+      }
+    }
+
+    setupActiveUsersTracking() {
+        // IPC listener'ları ayarla
+        ipcRenderer.on('update-active-users', (event, count) => {
+            this.updateActiveUsersDisplay(count);
+        });
+
+        this.refreshActiveUsersCount();
+        
+        // Her 30 saniyede bir aktif kullanıcı sayısını güncelle
+        setInterval(() => {
+            this.refreshActiveUsersCount();
+        }, 30000); // 30 saniye
+    }
+
+    async refreshActiveUsersCount() {
+        try {
+            const count = await ipcRenderer.invoke('refresh-active-users');
+            this.updateActiveUsersDisplay(count);
+        } catch (error) {
+            console.error('Aktif kullanıcı sayısı alınamadı:', error);
+            this.updateActiveUsersDisplay(0);
+        }
+    }
+
+    updateActiveUsersDisplay(count) {
+        const countElement = document.getElementById('activeUsersCount');
+        const indicator = document.getElementById('activeUsersIndicator');
+        
+        if (countElement && indicator) {
+            if (count === 0 || count === null || count === undefined) {
+                countElement.textContent = '-';
+                indicator.style.opacity = '0.5';
+            } else {
+                countElement.textContent = count;
+                indicator.style.opacity = '1';
+                
+                // Animasyon efekti
+                indicator.style.transform = 'scale(1.1)';
+                setTimeout(() => {
+                    indicator.style.transform = 'scale(1)';
+                }, 200);
+            }
+      }
+    }
+    
 }
+
+// Global test function for console access
+window.testZipExtraction = (zipPath, targetDir) => {
+  return ui.testZipExtraction(zipPath, targetDir);
+};
+
+// Global manual install info functions
+window.closeManualInstallInfo = () => {
+  ui.closeManualInstallInfo();
+};
 
 // Initialize the application
 const ui = new SteamLibraryUI();
@@ -2682,6 +4137,7 @@ function renderAllTexts() {
     }
   });
 }
+
 // Sayfa değişimlerinde ve dil değişiminde otomatik çağrılacak şekilde ayarla
 const originalSwitchPage = SteamLibraryUI.prototype.switchPage;
 SteamLibraryUI.prototype.switchPage = function(page) {
@@ -2711,11 +4167,12 @@ const languageFlagUrls = {
   ko: "https://flagcdn.com/w40/kr.png",
   zh: "https://flagcdn.com/w40/cn.png",
   pl: "https://flagcdn.com/w40/pl.png",
+  az: "https://flagcdn.com/w40/az.png",
 };
 
 // Dil-kodundan ülke kodu eşlemesi
 const langToCountry = {
-  tr: 'TR', en: 'US', de: 'DE', fr: 'FR', es: 'ES', ru: 'RU', zh: 'CN', ja: 'JP', it: 'IT', pt: 'PT', ko: 'KR', pl: 'PL'
+  tr: 'TR', en: 'US', de: 'DE', fr: 'FR', es: 'ES', ru: 'RU', zh: 'CN', ja: 'JP', it: 'IT', pt: 'PT', ko: 'KR', pl: 'PL', az: 'AZ'
 };
 
 // Yardımcı fonksiyon: Steam API'ye güvenli fetch
@@ -2733,3 +4190,5 @@ async function safeSteamFetch(url) {
         return await fetch(url);
     }
 }
+
+// Tüm Oyunlar ve filtreleme ile ilgili fonksiyonlar kaldırıldı

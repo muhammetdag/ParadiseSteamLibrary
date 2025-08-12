@@ -18,6 +18,20 @@
         </div>
         
         <div class="title-bar-right">
+
+            <div class="active-users-indicator" id="activeUsersIndicator">
+                <div class="active-users-icon">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                        <circle cx="9" cy="7" r="4"/>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                    </svg>
+                </div>
+                <span class="active-users-count" id="activeUsersCount">-</span>
+                <span class="active-users-label">aktif</span>
+            </div>
+            
             <button class="title-btn minimize-btn" id="minimizeBtn">
                 <svg width="12" height="12" viewBox="0 0 12 12">
                     <path d="M2 6h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -39,12 +53,11 @@
     <div class="main-container">
         <div class="content-wrapper">
             <div class="top-nav" id="topNav">
-                <div class="nav-left">
-                    </div>
+                <div class="nav-left"></div>
                 <div class="nav-right">
                     <div class="search-container">
                         <div class="search-icon">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
                                 <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/>
                                 <path d="m21 21-4.35-4.35" stroke="currentColor" stroke-width="2"/>
                             </svg>
@@ -53,38 +66,55 @@
                         <div class="search-shortcut">Ctrl+K</div>
                     </div>
                 </div>
-                <div class="floating-hamburger">
-                    <button class="hamburger-btn" id="hamburgerMenuBtn">
-                        <span class="hamburger-line"></span>
-                        <span class="hamburger-line"></span>
-                        <span class="hamburger-line"></span>
+            </div>
+
+            <!-- Floating Hamburger Menu -->
+            <div class="floating-hamburger">
+                <button class="hamburger-btn" id="hamburgerMenuBtn">
+                    <span class="hamburger-line"></span>
+                    <span class="hamburger-line"></span>
+                    <span class="hamburger-line"></span>
+                </button>
+                <div class="bubble-menu" id="bubbleMenu">
+                    <button class="bubble-item" id="bubbleHome" title="Ana Sayfa">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                            <polyline points="9,22 9,12 15,12 15,22"/>
+                        </svg>
                     </button>
-                    <div class="bubble-menu" id="bubbleMenu">
-                        <button class="bubble-item" id="bubbleHome" title="Ana Sayfa">
-                            <span style="font-size:20px;">🏠</span>
-                        </button>
-                        <button class="bubble-item" id="bubbleLibrary" title="Kütüphanem">
-                            <span style="font-size:20px;">📚</span>
-                        </button>
-                        <button class="bubble-item" id="bubbleOnlinePass" title="Online Pass">
-                            <span style="font-size:20px;">👥</span>
-                        </button>
-                        <button class="bubble-item" id="bubbleManualInstall" title="Manuel Kurulum">
-                            <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                <polyline points="7,10 12,15 17,10"/>
-                                <line x1="12" y1="15" x2="12" y2="3"/>
-                            </svg>
-                        </button>
-                        <button class="bubble-item" id="bubbleSettings" title="Ayarlar">
-                            <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06-.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15.4a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 5 8.6a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8.6 5a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 16 5a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19 8.6a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19 15.4z"/></svg>
-                        </button>
-                    </div>
+                    <button class="bubble-item" id="bubbleLibrary" title="Kütüphanem">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                        </svg>
+                    </button>
+                    <!-- Tüm Oyunlar kısa yolu kaldırıldı -->
+                    <button class="bubble-item" id="bubbleOnlinePass" title="Online Pass">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                            <circle cx="9" cy="7" r="4"/>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                        </svg>
+                    </button>
+                    <button class="bubble-item" id="bubbleManualInstall" title="Manuel Kurulum">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7,10 12,15 17,10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                    </button>
+                    <button class="bubble-item" id="bubbleSettings" title="Ayarlar">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="3"/>
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06-.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15.4a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 5 8.6a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8.6 5a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 16 5a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19 8.6a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19 15.4z"/>
+                        </svg>
+                    </button>
                 </div>
-    
             </div>
 
             <div class="page-content">
+                <!-- Home Page -->
                 <div class="page active" id="homePage">
                     <div class="hero-section" id="heroSection">
                         <div class="hero-background" id="heroBackground"></div>
@@ -94,14 +124,15 @@
                             <h1 class="hero-title" id="heroTitle" data-i18n="loading">Yükleniyor...</h1>
                             <p class="hero-description" id="heroDescription" data-i18n="discovering_games">Harika oyunlar keşfediliyor...</p>
                             <div class="hero-actions">
-                                <button class="hero-btn primary" id="heroViewBtn" data-i18n="view_details">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                                        <path d="M8 5v14l11-7z"/>
+                                <button class="hero-btn primary" id="heroViewBtn">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10"/>
+                                        <path d="M12 6v6l4 2"/>
                                     </svg>
                                     <span data-i18n="view_details">Detayları Görüntüle</span>
                                 </button>
-                                <button class="hero-btn secondary" id="heroLibraryBtn" data-i18n="add_to_library">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <button class="hero-btn secondary" id="heroLibraryBtn">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
                                     </svg>
                                     <span data-i18n="add_to_library">Kütüphaneme Ekle</span>
@@ -109,26 +140,21 @@
                             </div>
                         </div>
                         <div class="hero-game-info">
-                            <div class="game-rating" id="heroRating">
-                                <div class="rating-stars"></div>
-                                
-                            </div>
-                            <div class="game-price" id="heroPrice" data-i18n="price">$0.00</div>
+                            <div class="game-price" id="heroPrice">$0.00</div>
                         </div>
                     </div>
 
                     <div class="games-section">
                         <div class="section-header">
                             <h2 class="section-title" id="sectionTitle" data-i18n="featured_games">Öne Çıkan Oyunlar</h2>
-                            </div>
+                        </div>
                         
-                        <div class="games-grid" id="gamesGrid">
-                            </div>
+                        <div class="games-grid" id="gamesGrid"></div>
 
                         <div class="load-more-container">
                             <button class="load-more-btn" id="loadMoreBtn">
                                 <span data-i18n="load_more">Daha Fazla Oyun Yükle</span>
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M12 5v14M5 12l7 7 7-7"/>
                                 </svg>
                             </button>
@@ -136,6 +162,7 @@
                     </div>
                 </div>
 
+                <!-- Library Page -->
                 <div class="page" id="libraryPage">
                     <div class="page-header">
                         <h1 data-i18n="library">Kütüphanem</h1>
@@ -147,7 +174,7 @@
                                 </div>
                             </div>
                             <button class="refresh-btn" id="refreshLibraryBtn" title="Kütüphaneyi Yenile" data-i18n-title="refresh_library">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
                                     <path d="M21 3v5h-5"/>
                                     <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
@@ -156,10 +183,13 @@
                             </button>
                         </div>
                     </div>
-                    <div class="library-grid" id="libraryGrid">
-                        </div>
+                    
+
+                    
+                    <div class="library-grid" id="libraryGrid"></div>
                 </div>
 
+                <!-- Settings Page -->
                 <div class="page" id="settingsPage">
                     <div class="page-header">
                         <h1 data-i18n="settings">Ayarlar</h1>
@@ -169,63 +199,44 @@
                             <h3 data-i18n="steam_config">Steam Yapılandırması</h3>
                             <div class="setting-item">
                                 <label data-i18n="steam_path">Steam Kurulum Yolu:</label>
-                                <div class="path-input-group">
-                                    <input type="text" id="steamPathInput" readonly data-i18n-placeholder="steam_path_placeholder">
-                                    <button class="browse-btn" id="browseSteamBtn" data-i18n="browse">Gözat</button>
-                                </div>
+                            </div>
+                            <div class="path-input-group">
+                                <input type="text" id="steamPathInput" readonly data-i18n-placeholder="steam_path_placeholder">
+                                <button class="browse-btn" id="browseSteamBtn" data-i18n="browse">Gözat</button>
                             </div>
                         </div>
                         <div id="settings-page"></div>
                     </div>
                 </div>
+
+                <!-- All Games Page kaldırıldı -->
+
+                <!-- Online Pass Page -->
                 <div class="page" id="onlinePassPage" style="display:none;">
                     <div class="page-header">
-                        <h1 style="font-size:2.2rem;font-weight:800;color:#00bfff;">Online Oyun Ekle</h1>
+                        <h1 data-i18n="online_pass">Online Pass</h1>
                     </div>
-                    <div style="padding:32px 0 0 16px;font-size:1.2rem;color:#fff;max-width:600px;">
-                        <p>Eklemek istediğiniz online oyunun ana klasörünü seçin. Bu klasör oyunun çalıştırılabilir dosyasını (örneğin, .exe dosyası) içeren klasör olmalıdır.</p>
-                        <div class="setting-item" style="margin-top:20px;">
-                            <label for="gamePathInput" style="display:block;margin-bottom:8px;font-size:1.1rem;">Oyun Klasörü Yolu:</label>
-                            <div class="path-input-group">
-                                <input type="text" id="gamePathInput" class="custom-input" placeholder="Oyunun kurulu olduğu klasörü seçin..." readonly style="flex-grow:1;padding:10px;border:1px solid #444;border-radius:6px;background:#2a2a2a;color:#eee;">
-                                <button class="browse-btn" id="browseGamePath" style="padding:10px 15px;background:#00bfff;color:#fff;border:none;border-radius:6px;cursor:pointer;margin-left:10px;">Gözat</button>
-                            </div>
-                        </div>
-                        <div class="setting-item" style="margin-top:20px;">
-                            <label for="gameNameInput" style="display:block;margin-bottom:8px;font-size:1.1rem;">Oyun Adı:</label>
-                            <input type="text" id="gameNameInput" class="custom-input" placeholder="Oyun adını girin (örneğin: Counter-Strike 2)" style="width:100%;padding:10px;border:1px solid #444;border-radius:6px;background:#2a2a2a;color:#eee;">
-                        </div>
-                        <button class="action-btn primary" id="addOnlineGameBtn" style="margin-top:30px;padding:12px 25px;font-size:1.1rem;background:#00bfff;color:#fff;border:none;border-radius:6px;cursor:pointer;">Online Oyunu Ekle</button>
-                    </div>
-                    <style>
-                        /* Basic styling for the new page elements to match your theme */
-                        .custom-input:focus,
-                        .browse-btn:focus,
-                        .action-btn:focus {
-                            outline: none;
-                            box-shadow: 0 0 0 2px rgba(0, 191, 255, 0.5); /* Focus effect */
-                        }
-                    </style>
                 </div>
 
+                <!-- Manual Install Page -->
                 <div class="page" id="manualInstallPage" style="display:none;">
                     <div class="page-header">
-                        <h1 style="font-size:2.2rem;font-weight:800;color:#00d4ff;">Manuel Kurulum</h1>
+                        <h1>Manuel Kurulum</h1>
                     </div>
                     <div class="manual-install-content">
                         <div class="upload-section">
                             <div class="upload-area" id="uploadArea">
-                                                            <div class="upload-icon">
-                                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                    <polyline points="7,10 12,15 17,10"/>
-                                    <line x1="12" y1="15" x2="12" y2="3"/>
-                                </svg>
-                            </div>
-                            <h3 data-i18n="upload_game_file">Oyun Dosyasını Yükle</h3>
-                            <p data-i18n="drag_drop_zip">ZIP dosyasını buraya sürükleyip bırakın veya tıklayarak seçin</p>
-                            <input type="file" id="gameFileInput" accept=".zip" style="display:none;">
-                            <button class="upload-btn" id="selectFileBtn" data-i18n="select_file">Dosya Seç</button>
+                                <div class="upload-icon">
+                                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                        <polyline points="7,10 12,15 17,10"/>
+                                        <line x1="12" y1="15" x2="12" y2="3"/>
+                                    </svg>
+                                </div>
+                                <h3 data-i18n="upload_game_file">Oyun Dosyasını Yükle</h3>
+                                <p data-i18n="drag_drop_zip">ZIP dosyasını buraya sürükleyip bırakın veya tıklayarak seçin</p>
+                                <input type="file" id="gameFileInput" accept=".zip" style="display:none;">
+                                <button class="upload-btn" id="selectFileBtn" data-i18n="select_file">Dosya Seç</button>
                             </div>
                         </div>
                         
@@ -245,7 +256,7 @@
                         
                         <div class="install-actions" id="installActions" style="display:none;">
                             <button class="action-btn primary" id="installGameBtn">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M12 2L2 7l10 5 10-5-10-5z"/>
                                     <path d="M2 17l10 5 10-5"/>
                                     <path d="M2 12l10 5 10-5"/>
@@ -259,7 +270,7 @@
         </div>
     </div>
 
-
+    <!-- Game Details Modal -->
     <div class="modal-overlay" id="gameModal">
         <div class="modal-container">
             <div class="modal-header">
@@ -272,7 +283,7 @@
                     </div>
                 </div>
                 <button class="modal-close" id="modalClose">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18"/>
                         <line x1="6" y1="6" x2="18" y2="18"/>
                     </svg>
@@ -282,22 +293,14 @@
             <div class="modal-content">
                 <div class="modal-media">
                     <div class="main-image-container">
-                        <div id="modalPreviewThumbnails" style="display:flex;gap:8px;margin-bottom:8px;"></div>
+                        <div id="modalPreviewThumbnails"></div>
                         <div id="modalVideoContainer" style="position:relative;"></div>
-                        <img id="modalMainImage" src="" alt="Oyun Ekran Görüntüsü" style="width:100%;max-height:340px;object-fit:cover;display:none;">
+                        <img id="modalMainImage" src="" alt="Oyun Ekran Görüntüsü" style="display:none;">
                     </div>
-                    <div id="modalLangList" style="display:flex;gap:8px;margin:12px 0 8px 0;"></div>
                 </div>
                 
                 <div class="modal-info">
                     <div class="game-stats">
-                        <div class="stat-item">
-                            <div class="stat-label" data-i18n="rating">Değerlendirme</div>
-                            <div class="stat-value" id="modalRating">
-                                <div class="rating-stars"></div>
-                                <span class="rating-number">4.5</span>
-                            </div>
-                        </div>
                         <div class="stat-item">
                             <div class="stat-label" data-i18n="price">Fiyat</div>
                             <div class="stat-value price" id="modalPrice">$29.99</div>
@@ -328,34 +331,35 @@
                         </div>
                         <div class="detail-row">
                             <span class="detail-label" data-i18n="genres">Türler:</span>
-                            <div class="genre-tags" id="modalGenres">
-                                </div>
+                            <div class="genre-tags" id="modalGenres"></div>
                         </div>
                     </div>
                     
                     <div class="modal-actions">
                         <button class="action-btn primary" id="modalAddBtn" data-i18n="add_to_library">Kütüphaneme Ekle</button>
                         <button class="action-btn secondary" id="modalSteamBtn" data-i18n="open_in_steam">Steam'de Aç</button>
+                        <button class="action-btn primary" id="modalStartBtn" style="display:none;" data-i18n="start_game">Oyunu Başlat</button>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
+    <!-- DLC Selection Modal -->
     <div class="modal-overlay" id="dlcModal">
         <div class="modal-container">
             <div class="modal-header">
                 <h2 data-i18n="select_dlcs">DLC'leri Seç</h2>
                 <button class="modal-close" id="dlcModalClose">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18"/>
                         <line x1="6" y1="6" x2="18" y2="18"/>
                     </svg>
                 </button>
             </div>
             <div class="modal-content">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-                    <input type="checkbox" id="selectAllDLC" style="transform:scale(1.2);">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+                    <input type="checkbox" id="selectAllDLC">
                     <label for="selectAllDLC" data-i18n="select_all_dlcs">Tümünü Seç</label>
                 </div>
                 <div class="dlc-list" id="dlcList"></div>
@@ -367,6 +371,7 @@
         </div>
     </div>
 
+    <!-- Steam Restart Modal -->
     <div class="modal-overlay" id="steamRestartModal">
         <div class="modal-container small">
             <div class="modal-header">
@@ -375,7 +380,7 @@
             <div class="modal-content">
                 <p data-i18n="restart_steam_info">Oyun kütüphanenize eklendi! Değişiklikleri görmek için Steam'in yeniden başlatılması gerekiyor.</p>
                 <p data-i18n="restart_steam_question">Steam'i şimdi yeniden başlatmak istiyor musunuz?</p>
-                <div class="countdown" id="countdown">5</div>
+                <div class="countdown" id="countdown" style="font-size: 36px; font-weight: 800; color: var(--accent-primary); text-align: center; margin: 16px 0;">5</div>
                 <div class="modal-actions">
                     <button class="action-btn primary" id="restartSteamBtn" data-i18n="restart_steam_yes">Evet, Yeniden Başlat</button>
                     <button class="action-btn secondary" id="cancelRestartBtn" data-i18n="restart_steam_no">Hayır, Daha Sonra</button>
@@ -384,6 +389,7 @@
         </div>
     </div>
 
+    <!-- Steam Setup Modal -->
     <div class="modal-overlay" id="steamSetupModal">
         <div class="modal-container">
             <div class="modal-header">
@@ -391,7 +397,7 @@
             </div>
             <div class="modal-content">
                 <p>Devam etmek için lütfen Steam kurulum klasörünüzü seçin.</p>
-                <div class="path-input-group">
+                <div class="path-input-group" style="margin: 20px 0;">
                     <input type="text" id="setupSteamPath" placeholder="Steam kurulum yolu..." readonly>
                     <button class="browse-btn" id="setupBrowseBtn">Gözat</button>
                 </div>
@@ -402,26 +408,54 @@
         </div>
     </div>
 
+    <!-- Loading Overlay -->
     <div class="loading-overlay" id="loadingOverlay">
         <div class="loading-content">
             <div class="loading-spinner">
-                <div class="spinner-ring"></div>
-                <div class="spinner-ring"></div>
                 <div class="spinner-ring"></div>
             </div>
             <div class="loading-text">Harika oyunlar yükleniyor...</div>
         </div>
     </div>
 
-    <div class="notification-container" id="notificationContainer">
-        </div>
+    <!-- Notification Container -->
+    <div class="notification-container" id="notificationContainer"></div>
 
     <div id="settings-page"></div>
 
-    <footer style="width:100%;background:#10141a;color:#aaa;text-align:center;padding:18px 0 12px 0;font-size:15px;letter-spacing:0.2px;box-shadow:0 -2px 16px #0003;margin-top:32px;">
+    <footer>
         © 2025 Paradise Development. Tüm hakları saklıdır.
     </footer>
+
+    <!-- AI Chat: toggle button -->
+    <button id="aiChatToggle" class="ai-chat-toggle" title="Sohbet">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>
+        </svg>
+    </button>
+
+    <!-- AI Chat: panel -->
+    <div id="aiChatWidget" class="ai-chat hidden" aria-hidden="true">
+        <div class="ai-chat-header">
+            <div class="ai-chat-title">Paradise AI</div>
+            <div class="ai-chat-actions">
+                <button id="aiChatClear" class="ai-chat-icon" title="Temizle">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/></svg>
+                </button>
+                <button id="aiChatClose" class="ai-chat-icon" title="Kapat">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+        </div>
+        <div id="aiChatMessages" class="ai-chat-messages"></div>
+        <div class="ai-chat-input">
+            <textarea id="aiChatTextarea" rows="2" placeholder="Denuvolu oyunlar nasıl oynanır?"></textarea>
+            <button id="aiChatSend" class="ai-chat-send" title="Gönder">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+        </div>
+    </div>
+
     <script src="renderer.js"></script>
 </body>
-
 </html>

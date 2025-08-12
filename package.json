@@ -1,6 +1,6 @@
 {
   "name": "paradise-steam-library",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Paradise Steam Library",
   "main": "src/main.js",
   "scripts": {
@@ -10,7 +10,8 @@
     "build-win": "electron-builder --win",
     "build-portable": "electron-builder --win portable",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --publish=never"
+    "dist": "electron-builder --publish=never",
+    "generate-icons": "electron-icon-builder --input=src/pdlogo.png --output=src --flatten"
   },
   "keywords": [
     "steam",
@@ -23,7 +24,8 @@
   "license": "MIT",
   "devDependencies": {
     "electron": "^28.0.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "electron-icon-builder": "^2.0.1"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
@@ -39,7 +41,7 @@
   "build": {
     "appId": "com.muhammetdag.paradise-steam-library",
     "productName": "Paradise Steam Library",
-    "icon": "pdlogo.ico",
+    "icon": "src/icons/icon.ico",
     "directories": {
       "output": "dist"
     },
@@ -51,15 +53,13 @@
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
-        },
-        {
-          "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
-      "icon": "pdlogo.ico"
-    },
+      "icon": "src/icons/icon.ico"
+   },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true

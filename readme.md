@@ -21,6 +21,10 @@ Modern Steam Kütüphane Yöneticisi - Gelişmiş özellikler ve kullanıcı dos
 - **Otomatik Algılama**: Oyun ID'sini otomatik algılar
 - **Steam Entegrasyonu**: Steam kütüphanesine otomatik ekleme
 
+### 🤖 Yerleşik AI Sohbet
+- Uygulamanın sağ alt köşesinde AI sohbet yardımcısı.
+- Discord ve harici yerler yerine, uygulama içerisinden destek alabilirsiniz.
+
 ### 🎨 Modern Arayüz
 - **Dark Theme**: Göz yormayan koyu tema
 - **Responsive Design**: Tüm ekran boyutlarına uyumlu
@@ -64,39 +68,41 @@ npm run build-win
 npm run build
 ```
 
-## 🔄 Son Güncellemeler
+## [v2.0.2] - 12.08.2025
 
-## [v2.0.1] - 04.08.2025
+# Paradise Steam Library v2.0.2
 
-### 🐛 Bug Fixes
-- **OnlinePass Arama Sistemi**: Online Pass sayfasında oyun arama sorunu çözüldü
-  - Hem oyun ID'si hem oyun ismi ile arama yapılabilir
-  - Steam API'den oyun isimleri otomatik çekilir ve önbelleklenir
-  - Arama performansı iyileştirildi
-- **Kütüphane Bug'u**: Kütüphane yükleme ve görüntüleme sorunları düzeltildi
-  - `appendChild` hataları çözüldü
-  - Asenkron oyun kartı oluşturma iyileştirildi
-  - Null kontrolleri eklendi
+## 🖼 Arayüz Güncellemesi
+- Tüm sayfalarda tasarım düzenlemesi yapıldı.
+- Arayüz daha kompakt hale getirildi.
+- İkonlar düzeltildi.
+- Daha performanslı bir arayüz elde edildi.
 
-### ✨ New Features
-- **Gelişmiş Online Pass Arama**: 
-  - Çift arama sistemi (ID + İsim)
-  - Otomatik oyun ismi önbellekleme
-  - Paralel Steam API çağrıları
-  - Hızlı ve responsive arama
 
-### 🔧 Technical Improvements
-- **Asenkron İşlemler**: Oyun kartı oluşturma işlemleri optimize edildi
-- **Hata Yönetimi**: Robust error handling eklendi
-- **Performans**: Online Pass sayfası yükleme hızı artırıldı
+## 🎮 Yeni Özellikler
 
-### 📝 Examples
-```
-ID Arama: "240" → 2406770, 240760
-İsim Arama: "bodycam" → BODYCAM
-İsim Arama: "euro" → Euro Truck Simulator 2
-İsim Arama: "ready" → Ready or Not
-```
+### 🔐 Yeni OnlinePass Ssitemi
+- Tamamen yenilenmiş OnlinePass sistemi
+- 1400'den fazla online oyun desteği
+- Manuel kurulum ile sorunsuz oynama desteği
+
+### 🤖 Yerleşik AI Sohbet
+- Uygulamanın sağ alt köşesine AI sohbet yardımcısı eklendi.
+- Discord ve harici yerler yerine, uygulama içerisinden destek alabilirsiniz.
+- Sohbet geçmişi yerel oturumda tutulur ve performans için son 50 mesaj saklanır.
+
+### 🌍 Çok Dilli Sistem Bilgilendirmesi
+- Azerbaycan dili için dil desteği getirildi.
+- OnlinePass ve manuel kurulum sayfaları için dil desteği entegre edildi.
+
+## 🔧 Teknik İyileştirmeler
+
+### Backend
+- API erişim sorunu yaşanmaması adına subdomain'e aktarıldı.
+ - AI proxy servisi eklendi ve CORS uyumlu hale getirildi.
+
+
+---
 
 ## 🤝 Katkıda Bulunma
 
@@ -112,7 +118,7 @@ Bu proje MIT lisansı altında lisanslanmıştır. Detaylar için `LICENSE` dosy
 
 ## 👨‍💻 Geliştirici
 
-**Muhammet Dağ** - Modern Steam kütüphane yönetimi için geliştirilmiştir.
+**Muhammet DAĞ** - Modern Steam kütüphane yönetimi için geliştirilmiştir.
 
 ---
 

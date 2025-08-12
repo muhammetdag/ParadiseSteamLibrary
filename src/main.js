@@ -9,7 +9,13 @@ const { spawn, exec } = require('child_process');
 const tmp = require('os').tmpdir();
 const { v4: uuidv4 } = require('uuid'); // Eğer uuid yoksa npm install uuid
 const AdmZip = require('adm-zip');
+const stream = require('stream');
+const { promisify } = require('util');
+const pipeline = promisify(stream.pipeline);
 
+const USER_ACTIVITY_API = 'API_URL_HERE';
+let userSessionId = null;
+let isOnline = false;
 
 class SteamLibraryManager {
   constructor() {
@@ -21,7 +27,126 @@ class SteamLibraryManager {
     this.gamesCache = {};
     this.discordRPC = null;
 
-    this.init(); // Asenkron başlatıcı
+    this.init(); 
+  }
+
+  async startUserSession() {
+    try {
+      userSessionId = uuidv4();
+      const userData = {
+        sessionId: userSessionId,
+        appVersion: app.getVersion(),
+        platform: process.platform,
+        timestamp: new Date().toISOString(),
+        action: 'start'
+      };
+
+      const response = await axios.post(USER_ACTIVITY_API, userData, {
+        timeout: 5000,
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': `ParadiseSteamLibrary/${app.getVersion()}`,
+          'X-API-Key': 'API_KEY_HERE'
+        }
+      });
+
+      if (response.status === 200) {
+        isOnline = true;
+        console.log('✓ Kullanıcı oturumu başlatıldı');
+        
+        if (this.mainWindow) {
+          this.mainWindow.webContents.send('update-active-users', response.data.activeUsers);
+        }
+      }
+    } catch (error) {
+      console.log('✗ Kullanıcı oturumu başlatılamadı:', error.message);
+    }
+  }
+
+  async endUserSession() {
+    if (!userSessionId || !isOnline) return;
+
+    try {
+      const userData = {
+        sessionId: userSessionId,
+        timestamp: new Date().toISOString(),
+        action: 'end'
+      };
+
+      await axios.post(USER_ACTIVITY_API, userData, {
+        timeout: 3000,
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': `ParadiseSteamLibrary/${app.getVersion()}`,
+          'X-API-Key': 'API_KEY_HERE'
+        }
+      });
+
+      console.log('✓ Kullanıcı oturumu sonlandırıldı');
+    } catch (error) {
+      console.log('✗ Kullanıcı oturumu sonlandırılamadı:', error.message);
+    }
+  }
+
+  async getActiveUsersCount() {
+    try {
+      const response = await axios.get(`${USER_ACTIVITY_API}/count`, {
+        timeout: 5000,
+        headers: {
+          'User-Agent': `ParadiseSteamLibrary/${app.getVersion()}`,
+          'X-API-Key': 'API_KEY_HERE'
+        }
+      });
+
+      return response.data.activeUsers;
+    } catch (error) {
+      console.log('✗ Aktif kullanıcı sayısı alınamadı:', error.message);
+      return 0;
+    }
+  }
+
+  async checkExternalTools() {
+    console.log('Checking external tools availability...');
+    
+    // 7-Zip kontrolü
+    try {
+      const { exec } = require('child_process');
+      const util = require('util');
+      const execAsync = util.promisify(exec);
+      
+      await execAsync('7z --version');
+      console.log('✓ 7-Zip is available');
+    } catch (error) {
+      console.log('✗ 7-Zip is not available:', error.message);
+    }
+    
+    // WinRAR kontrolü
+    const winrarPaths = [
+      'C:\\Program Files\\WinRAR\\WinRAR.exe',
+      'C:\\Program Files (x86)\\WinRAR\\WinRAR.exe'
+    ];
+    
+    for (const winrarPath of winrarPaths) {
+      try {
+        const fs = require('fs-extra');
+        await fs.access(winrarPath);
+        console.log(`✓ WinRAR found at: ${winrarPath}`);
+      } catch (error) {
+        console.log(`✗ WinRAR not found at: ${winrarPath}`);
+      }
+    }
+    
+    // Sistem PATH'den WinRAR kontrolü
+    try {
+      const { exec } = require('child_process');
+      const util = require('util');
+      const execAsync = util.promisify(exec);
+      
+      await execAsync('winrar --version');
+      console.log('✓ WinRAR is available in system PATH');
+    } catch (error) {
+      console.log('✗ WinRAR is not available in system PATH:', error.message);
+    }
   }
 
   async init() {
@@ -29,6 +154,7 @@ class SteamLibraryManager {
     await this.loadConfig();
     await this.loadGamesCache();
     await this.initDiscordRPC();
+    await this.checkExternalTools(); // Harici araçları kontrol et
   }
 
   async ensureAppDataDir() {
@@ -129,7 +255,7 @@ class SteamLibraryManager {
     }
   }
 
-  createWindow() {
+  async createWindow() {
     this.mainWindow = new BrowserWindow({
       width: 1400,
       height: 900,
@@ -137,6 +263,7 @@ class SteamLibraryManager {
       minHeight: 700,
       frame: false,
       titleBarStyle: 'hidden',
+      title: 'Paradise Steam Library',
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false,
@@ -144,7 +271,7 @@ class SteamLibraryManager {
       },
       show: false,
       backgroundColor: '#0a0a0a',
-      icon: path.join(__dirname, 'pdlogo.ico') 
+      icon: path.join(__dirname, 'icons', 'icon.ico') 
     });
 
     this.mainWindow.loadFile('src/renderer/index.html');
@@ -160,6 +287,9 @@ class SteamLibraryManager {
     this.mainWindow.on('closed', () => {
       this.mainWindow = null;
     });
+
+    // Global referansı ayarla
+    global.steamManager = this;
 
     this.setupIPC();
   }
@@ -297,13 +427,57 @@ class SteamLibraryManager {
       }
     });
 
-    // Online oyun dosyası indirme - YENİ SİSTEM
+    // Test ZIP extraction - Debugging için
+    ipcMain.handle('test-zip-extraction', async (event, zipPath, targetDir) => {
+      try {
+        console.log('=== TESTING ZIP EXTRACTION ===');
+        console.log('ZIP Path:', zipPath);
+        console.log('Target Directory:', targetDir);
+        
+        // Dosya varlığını kontrol et
+        if (!await fs.pathExists(zipPath)) {
+          throw new Error(`ZIP dosyası bulunamadı: ${zipPath}`);
+        }
+        
+        const stats = await fs.stat(zipPath);
+        console.log('ZIP file size:', stats.size, 'bytes');
+        
+        // Hedef klasörü oluştur
+        await fs.ensureDir(targetDir);
+        console.log('Target directory created/verified');
+        
+        // Extraction test et
+        await this.extractZipFile(zipPath, targetDir);
+        
+        console.log('=== ZIP EXTRACTION TEST SUCCESSFUL ===');
+        return { success: true, message: 'ZIP extraction test successful' };
+      } catch (error) {
+        console.log('=== ZIP EXTRACTION TEST FAILED ===');
+        console.log('Error:', error.message);
+        return { success: false, error: error.message };
+      }
+    });
+
+    // Aktif kullanıcı sayısı için IPC handler'ları
+    ipcMain.handle('get-active-users-count', async () => {
+      return await this.getActiveUsersCount();
+    });
+
+    ipcMain.handle('refresh-active-users', async () => {
+      const count = await this.getActiveUsersCount();
+      if (this.mainWindow) {
+        this.mainWindow.webContents.send('update-active-users', count);
+      }
+      return count;
+    });
+
+    // Online oyun dosyası indirme
     ipcMain.handle('download-online-file', async (event, appId) => {
       try {
         console.log('Downloading online file for appId:', appId);
         
         // Önce oyun bilgilerini al
-        const gamesResponse = await axios.get('https://muhammetdag.com/api/v1/online/online_fix_games.json');
+        const gamesResponse = await axios.get('https://api.muhammetdag.com/steamlib/online/online_fix_games.json');
         const games = gamesResponse.data;
         
         const game = games.find(g => g.appid === parseInt(appId));
@@ -327,7 +501,7 @@ class SteamLibraryManager {
         
         try {
           // Dosyayı temp'e indir
-          const downloadResponse = await axios.get(`https://muhammetdag.com/api/v1/online/index.php?appid=${appId}`, {
+          const downloadResponse = await axios.get(`https://api.muhammetdag.com/steamlib/online/index.php?appid=${appId}`, {
             responseType: 'stream',
             timeout: 120000,
             headers: {
@@ -384,7 +558,7 @@ class SteamLibraryManager {
           try { await fs.remove(tempZipPath); } catch {}
           console.error('Download error details:', {
             appId,
-            url: `https://muhammetdag.com/api/v1/online/index.php?appid=${appId}`,
+            url: `https://api.muhammetdag.com/steamlib/online/index.php?appid=${appId}`,
             error: err.message,
             status: err.response?.status,
             statusText: err.response?.statusText,
@@ -1077,35 +1251,205 @@ class SteamLibraryManager {
       try {
         // Hedef klasörü oluştur
         fs.ensureDir(targetDir).then(() => {
+          console.log('Target directory created/verified:', targetDir);
+          
           // 7-Zip ile ayıklama (şifresiz)
-          const command = `7z x "${zipPath}" -o"${targetDir}"`;
+          const command = `7z x "${zipPath}" -o"${targetDir}" -y`;
+          console.log('Trying 7-Zip command:', command);
           
           exec(command, (error, stdout, stderr) => {
             if (error) {
-              console.log('7-Zip failed, trying WinRAR...');
+              console.log('7-Zip failed with error:', error.message);
+              console.log('7-Zip stderr:', stderr);
+              console.log('7-Zip stdout:', stdout);
+              console.log('Trying WinRAR...');
               
-              // WinRAR ile dene (şifresiz)
-              const winrarCommand = `winrar x "${zipPath}" "${targetDir}\\"`;
+              // WinRAR ile dene (şifresiz) - düzeltilmiş komut
+              const winrarCommand = `"C:\\Program Files\\WinRAR\\WinRAR.exe" x -y "${zipPath}" "${targetDir}\\"`;
+              console.log('Trying WinRAR command:', winrarCommand);
               
               exec(winrarCommand, (wrError, wrStdout, wrStderr) => {
                 if (wrError) {
-                  console.log('Both 7-Zip and WinRAR failed');
-                  reject(new Error('ZIP extraction failed'));
+                  console.log('WinRAR failed with error:', wrError.message);
+                  console.log('WinRAR stderr:', wrStderr);
+                  console.log('WinRAR stdout:', wrStdout);
+                  console.log('Trying alternative WinRAR path...');
+                  
+                  // Alternatif WinRAR yolu dene
+                  const winrarAltCommand = `"C:\\Program Files (x86)\\WinRAR\\WinRAR.exe" x -y "${zipPath}" "${targetDir}\\"`;
+                  console.log('Trying WinRAR (x86) command:', winrarAltCommand);
+                  
+                  exec(winrarAltCommand, (wrAltError, wrAltStdout, wrAltStderr) => {
+                    if (wrAltError) {
+                      console.log('WinRAR (x86) failed with error:', wrAltError.message);
+                      console.log('WinRAR (x86) stderr:', wrAltStderr);
+                      console.log('WinRAR (x86) stdout:', wrAltStdout);
+                      console.log('Trying system PATH WinRAR...');
+                      
+                      // Sistem PATH'den WinRAR dene
+                      const winrarPathCommand = `winrar x -y "${zipPath}" "${targetDir}\\"`;
+                      console.log('Trying WinRAR (PATH) command:', winrarPathCommand);
+                      
+                      exec(winrarPathCommand, (wrPathError, wrPathStdout, wrPathStderr) => {
+                        if (wrPathError) {
+                          console.log('WinRAR (PATH) failed with error:', wrPathError.message);
+                          console.log('WinRAR (PATH) stderr:', wrPathStderr);
+                          console.log('WinRAR (PATH) stdout:', wrPathStdout);
+                          console.log('All external tools failed, trying Node.js extraction...');
+                          
+                          // Node.js ile ZIP ayıklama dene
+                          this.extractWithNodeJS(zipPath, targetDir)
+                            .then(() => {
+                              console.log('Node.js extraction successful');
+                              resolve();
+                            })
+                            .catch((nodeError) => {
+                              console.log('All extraction methods failed');
+                              console.log('7-Zip error:', error.message);
+                              console.log('WinRAR error:', wrError.message);
+                              console.log('WinRAR Alt error:', wrAltError.message);
+                              console.log('WinRAR Path error:', wrPathError.message);
+                              console.log('Node.js error:', nodeError.message);
+                              reject(new Error('ZIP extraction failed - tüm yöntemler başarısız'));
+                            });
+                        } else {
+                          console.log('WinRAR (PATH) extraction successful');
+                          console.log('WinRAR output:', wrPathStdout);
+                          resolve();
+                        }
+                      });
+                    } else {
+                      console.log('WinRAR (x86) extraction successful');
+                      console.log('WinRAR output:', wrAltStdout);
+                      resolve();
+                    }
+                  });
                 } else {
                   console.log('WinRAR extraction successful');
+                  console.log('WinRAR output:', wrStdout);
                   resolve();
                 }
               });
             } else {
               console.log('7-Zip extraction successful');
+              console.log('7-Zip output:', stdout);
               resolve();
             }
           });
         }).catch(error => {
+          console.log('Failed to create target directory:', error.message);
           reject(new Error(`Failed to create target directory: ${error.message}`));
         });
       } catch (error) {
+        console.log('ZIP extraction failed:', error.message);
         reject(new Error(`ZIP extraction failed: ${error.message}`));
+      }
+    });
+  }
+
+
+
+  async extractWithNodeJS(zipPath, targetDir) {
+    return new Promise((resolve, reject) => {
+      console.log('Attempting Node.js ZIP extraction...');
+      console.log('ZIP path:', zipPath);
+      console.log('Target directory:', targetDir);
+      
+      try {
+        // AdmZip ile ayıklama dene
+        console.log('Trying AdmZip extraction...');
+        const zip = new AdmZip(zipPath);
+        
+        try {
+          zip.extractAllTo(targetDir, true);
+          console.log('AdmZip extraction successful');
+          resolve();
+        } catch (extractError) {
+          console.log('AdmZip extraction failed:', extractError.message);
+          
+          // yauzl ile dene
+          console.log('Trying yauzl for ZIP...');
+          yauzl.open(zipPath, { lazyEntries: true }, (err, zipfile) => {
+            if (err) {
+              console.log('yauzl failed to open ZIP:', err.message);
+              reject(new Error(`Node.js ZIP extraction failed: ${err.message}`));
+              return;
+            }
+            
+            let extractedCount = 0;
+            let errorCount = 0;
+            
+            zipfile.readEntry();
+            zipfile.on('entry', (entry) => {
+              console.log(`yauzl processing: ${entry.fileName}`);
+              
+              if (/\/$/.test(entry.fileName)) {
+                // Klasör
+                const dirPath = path.join(targetDir, entry.fileName);
+                try {
+                  fs.ensureDirSync(dirPath);
+                  console.log(`yauzl created directory: ${dirPath}`);
+                } catch (dirError) {
+                  console.log(`yauzl failed to create directory: ${dirPath}`, dirError.message);
+                  errorCount++;
+                }
+                zipfile.readEntry();
+              } else {
+                // Dosya
+                zipfile.openReadStream(entry, (err, readStream) => {
+                  if (err) {
+                    console.log(`yauzl failed to read entry: ${entry.fileName}`, err.message);
+                    errorCount++;
+                    zipfile.readEntry();
+                    return;
+                  }
+                  
+                  const filePath = path.join(targetDir, entry.fileName);
+                  const dirPath = path.dirname(filePath);
+                  
+                  try {
+                    fs.ensureDirSync(dirPath);
+                    const writeStream = fs.createWriteStream(filePath);
+                    readStream.pipe(writeStream);
+                    
+                    writeStream.on('close', () => {
+                      console.log(`yauzl extracted file: ${filePath}`);
+                      extractedCount++;
+                      zipfile.readEntry();
+                    });
+                    
+                    writeStream.on('error', (writeError) => {
+                      console.log(`yauzl failed to write file: ${entry.fileName}`, writeError.message);
+                      errorCount++;
+                      zipfile.readEntry();
+                    });
+                  } catch (streamError) {
+                    console.log(`yauzl failed to setup stream for: ${entry.fileName}`, streamError.message);
+                    errorCount++;
+                    zipfile.readEntry();
+                  }
+                });
+              }
+            });
+            
+            zipfile.on('end', () => {
+              console.log(`yauzl extraction completed. Extracted: ${extractedCount}, Errors: ${errorCount}`);
+              if (extractedCount > 0) {
+                resolve();
+              } else {
+                reject(new Error('yauzl failed to extract any files'));
+              }
+            });
+            
+            zipfile.on('error', (yauzlError) => {
+              console.log('yauzl error:', yauzlError.message);
+              reject(new Error(`yauzl extraction failed: ${yauzlError.message}`));
+            });
+          });
+        }
+      } catch (error) {
+        console.log('Node.js extraction failed:', error.message);
+        reject(new Error(`Node.js ZIP extraction failed: ${error.message}`));
       }
     });
   }
@@ -1114,14 +1458,29 @@ class SteamLibraryManager {
 }
 
 // App event handlers
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   const manager = new SteamLibraryManager();
-  manager.createWindow();
+  await manager.createWindow();
+  
+  // Kullanıcı oturumunu başlat
+  await manager.startUserSession();
 });
 
-app.on('window-all-closed', () => {
+app.on('window-all-closed', async () => {
+  // Kullanıcı oturumunu sonlandır
+  if (global.steamManager) {
+    await global.steamManager.endUserSession();
+  }
+  
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+app.on('before-quit', async () => {
+  // Uygulama kapatılmadan önce oturumu sonlandır
+  if (global.steamManager) {
+    await global.steamManager.endUserSession();
   }
 });
 
