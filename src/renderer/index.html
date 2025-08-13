@@ -270,6 +270,43 @@
         </div>
     </div>
 
+    <!-- Discord Invite Modal -->
+    <div class="modal-overlay" id="discordInviteModal">
+        <div class="modal-container small">
+            <div class="modal-header">
+                <h2>Discord Sunucumuza Katıldınız mı?</h2>
+            </div>
+            <div class="modal-content">
+                <p>Güncellemeler, destek ve topluluk için Discord sunucumuza katılın.</p>
+                <br>
+                <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end;">
+                    <button class="action-btn secondary" id="discordInviteLaterBtn">Daha sonra</button>
+                    <button class="action-btn primary" id="discordInviteJoinBtn">Sunucuya Katıl</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Update Modal -->
+    <div class="modal-overlay" id="updateModal">
+        <div class="modal-container small">
+            <div class="modal-header">
+                <h2>Yeni güncelleme bulundu</h2>
+            </div>
+            <div class="modal-content">
+                <p>
+                    En son sürüm: <strong id="updateLatest">v?</strong><br>
+                    Mevcut sürüm: <span id="updateCurrent">v?</span>
+                </p>
+                <br>
+                <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end;">
+                    <button class="action-btn secondary" id="updateLaterBtn">Daha sonra</button>
+                    <button class="action-btn primary" id="openReleaseBtn">Güncellemeyi Aç</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Game Details Modal -->
     <div class="modal-overlay" id="gameModal">
         <div class="modal-container">

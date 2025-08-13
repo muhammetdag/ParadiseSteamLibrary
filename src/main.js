@@ -1,3 +1,6 @@
+// Load environment variables from .env file
+require('dotenv').config();
+
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs-extra');
@@ -13,7 +16,7 @@ const stream = require('stream');
 const { promisify } = require('util');
 const pipeline = promisify(stream.pipeline);
 
-const USER_ACTIVITY_API = 'API_URL_HERE';
+const USER_ACTIVITY_API = "";
 let userSessionId = null;
 let isOnline = false;
 
@@ -23,11 +26,93 @@ class SteamLibraryManager {
     this.appDataPath = path.join(os.homedir(), 'AppData', 'Local', 'paradisedev');
     this.configPath = path.join(this.appDataPath, 'config.json');
     this.gamesDataPath = path.join(this.appDataPath, 'games.json');
+    this.onlineGamesCachePath = path.join(this.appDataPath, 'online_games.json');
     this.config = {};
     this.gamesCache = {};
+    this.onlineGamesCache = { games: [], cached_at: 0 };
+    this.lastApiCallAtByHost = {};
     this.discordRPC = null;
 
     this.init(); 
+  }
+
+  async openUrlInChrome(url) {
+    // Daha güvenilir: where komutu ile bulmayı dene
+    try {
+      const { stdout } = await new Promise((resolve, reject) => {
+        exec('where chrome', (err, stdout, stderr) => {
+          if (err) return reject(err);
+          resolve({ stdout });
+        });
+      });
+      const found = stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      if (found.length > 0) {
+        spawn(found[0], [url], { detached: true, stdio: 'ignore' });
+        return true;
+      }
+    } catch (_) {}
+
+    // Kandidat yolları sırayla dene
+    for (const p of [
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe')
+    ]) {
+      try {
+        if (await fs.pathExists(p)) {
+          spawn(p, [url], { detached: true, stdio: 'ignore' });
+          return true;
+        }
+      } catch (_) {}
+    }
+
+    // Olmazsa varsayılan tarayıcı
+    await shell.openExternal(url);
+    return true;
+  }
+
+  // Basit host-bazlı API cooldown bekletmesi
+  async waitApiCooldown(hostname) {
+    try {
+      const now = Date.now();
+      const lastAt = this.lastApiCallAtByHost[hostname] || 0;
+      const cooldown = Math.max(0, (this.config.apiCooldown || 1000));
+      const elapsed = now - lastAt;
+      if (elapsed < cooldown) {
+        await new Promise(res => setTimeout(res, cooldown - elapsed));
+      }
+      this.lastApiCallAtByHost[hostname] = Date.now();
+    } catch (_) {
+      // yok say
+    }
+  }
+
+  // Online oyun listesi için önbellek + TTL
+  async getOnlineGamesWithCache(ttlMs = 24 * 60 * 60 * 1000) {
+    try {
+      const now = Date.now();
+      if (Array.isArray(this.onlineGamesCache.games) && this.onlineGamesCache.games.length > 0) {
+        if (now - (this.onlineGamesCache.cached_at || 0) < ttlMs) {
+          return this.onlineGamesCache.games;
+        }
+      }
+
+      await this.waitApiCooldown('api.muhammetdag.com');
+      const response = await axios.get('https://api.muhammetdag.com/steamlib/online/online_fix_games.json', {
+        timeout: 15000,
+        headers: {
+          'User-Agent': `ParadiseSteamLibrary/${app.getVersion()}`
+        }
+      });
+
+      const games = Array.isArray(response.data) ? response.data : [];
+      this.onlineGamesCache = { games, cached_at: now };
+      await this.saveOnlineGamesCache();
+      return games;
+    } catch (error) {
+      console.error('Failed to fetch online games list, using cache if available:', error.message);
+      return Array.isArray(this.onlineGamesCache.games) ? this.onlineGamesCache.games : [];
+    }
   }
 
   async startUserSession() {
@@ -46,7 +131,7 @@ class SteamLibraryManager {
         headers: {
           'Content-Type': 'application/json',
           'User-Agent': `ParadiseSteamLibrary/${app.getVersion()}`,
-          'X-API-Key': 'API_KEY_HERE'
+          'X-API-Key': ""
         }
       });
 
@@ -78,7 +163,7 @@ class SteamLibraryManager {
         headers: {
           'Content-Type': 'application/json',
           'User-Agent': `ParadiseSteamLibrary/${app.getVersion()}`,
-          'X-API-Key': 'API_KEY_HERE'
+          'X-API-Key': ""
         }
       });
 
@@ -94,7 +179,7 @@ class SteamLibraryManager {
         timeout: 5000,
         headers: {
           'User-Agent': `ParadiseSteamLibrary/${app.getVersion()}`,
-          'X-API-Key': 'API_KEY_HERE'
+          'X-API-Key': ""
         }
       });
 
@@ -153,6 +238,7 @@ class SteamLibraryManager {
     await this.ensureAppDataDir();
     await this.loadConfig();
     await this.loadGamesCache();
+    await this.loadOnlineGamesCache();
     await this.initDiscordRPC();
     await this.checkExternalTools(); // Harici araçları kontrol et
   }
@@ -174,7 +260,8 @@ class SteamLibraryManager {
           animations: true,
           soundEffects: true,
           apiCooldown: 1000,
-          maxConcurrentRequests: 5
+          maxConcurrentRequests: 5,
+          discordInviteAsked: false
         };
         await this.saveConfig();
       }
@@ -208,6 +295,31 @@ class SteamLibraryManager {
       await fs.writeJson(this.gamesDataPath, this.gamesCache, { spaces: 2 });
     } catch (error) {
       console.error('Failed to save games cache:', error);
+    }
+  }
+
+  async loadOnlineGamesCache() {
+    try {
+      if (await fs.pathExists(this.onlineGamesCachePath)) {
+        const data = await fs.readJson(this.onlineGamesCachePath);
+        this.onlineGamesCache = {
+          games: Array.isArray(data?.games) ? data.games : [],
+          cached_at: typeof data?.cached_at === 'number' ? data.cached_at : 0
+        };
+      } else {
+        this.onlineGamesCache = { games: [], cached_at: 0 };
+      }
+    } catch (error) {
+      console.error('Failed to load online games cache:', error);
+      this.onlineGamesCache = { games: [], cached_at: 0 };
+    }
+  }
+
+  async saveOnlineGamesCache() {
+    try {
+      await fs.writeJson(this.onlineGamesCachePath, this.onlineGamesCache, { spaces: 2 });
+    } catch (error) {
+      console.error('Failed to save online games cache:', error);
     }
   }
 
@@ -267,7 +379,8 @@ class SteamLibraryManager {
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false,
-        webSecurity: false
+        webSecurity: false,
+     
       },
       show: false,
       backgroundColor: '#0a0a0a',
@@ -344,6 +457,27 @@ class SteamLibraryManager {
         }
       }
       return null;
+    });
+
+    // URL'i Google Chrome'da aç
+    ipcMain.handle('open-in-chrome', async (event, url) => {
+      try {
+        return await this.openUrlInChrome(url);
+      } catch (error) {
+        console.error('Failed to open in Chrome:', error);
+        // Son çare: varsayılan tarayıcıda aç
+        try { await shell.openExternal(url); } catch {}
+        return false;
+      }
+    });
+
+    // Uygulama sürümünü döndür
+    ipcMain.handle('get-app-version', () => {
+      try {
+        return app.getVersion();
+      } catch (e) {
+        return null;
+      }
     });
 
     // Steam API operations
@@ -476,9 +610,8 @@ class SteamLibraryManager {
       try {
         console.log('Downloading online file for appId:', appId);
         
-        // Önce oyun bilgilerini al
-        const gamesResponse = await axios.get('https://api.muhammetdag.com/steamlib/online/online_fix_games.json');
-        const games = gamesResponse.data;
+        // Önce oyun listesini (TTL + cache ile) al
+        const games = await this.getOnlineGamesWithCache();
         
         const game = games.find(g => g.appid === parseInt(appId));
         
@@ -500,6 +633,8 @@ class SteamLibraryManager {
         const tempZipPath = path.join(tmp, `${appId}_${uuidv4()}.zip`);
         
         try {
+          // Basit rate limit: aynı host için config.apiCooldown'a uy
+          await this.waitApiCooldown('api.muhammetdag.com');
           // Dosyayı temp'e indir
           const downloadResponse = await axios.get(`https://api.muhammetdag.com/steamlib/online/index.php?appid=${appId}`, {
             responseType: 'stream',
@@ -579,7 +714,7 @@ class SteamLibraryManager {
     //     console.log('Downloading online file for appId:', appId);
     //     
     //     // Önce oyun bilgilerini al
-    //     const gamesResponse = await axios.get('https://muhammetdag.com/api/v1/online/online_fix_games.json');
+    //     const gamesResponse = await axios.get('https://api.muhammetdag.com/steamlib/online/online_fix_games.json');
     //     const games = gamesResponse.data;
     //     //console.log('Available games:', games);
     //     
@@ -606,7 +741,7 @@ class SteamLibraryManager {
     //     
     //     try {
     //       // Dosyayı temp'e indir
-    //       const downloadResponse = await axios.get(`https://muhammetdag.com/api/v1/online/index.php?appid=${appId}`, {
+    //       const downloadResponse = await axios.get(`https://api.muhammetdag.com/steamlib/online/index.php?appid=${appId}`, {
     //         responseType: 'stream',
     //         timeout: 120000,
     //         headers: {
@@ -663,7 +798,7 @@ class SteamLibraryManager {
     //       try { await fs.remove(tempZipPath); } catch {}
     //       console.error('Download error details:', {
     //         appId,
-    //         url: `https://muhammetdag.com/api/v1/online/index.php?appid=${appId}`,
+    //         url: `https://api.muhammetdag.com/steamlib/online/index.php?appid=${appId}`,
     //         error: err.message,
     //         status: err.response?.status,
     //         statusText: err.response?.statusText,
@@ -696,30 +831,39 @@ class SteamLibraryManager {
       
       switch (category) {
         case 'featured':
+          await this.waitApiCooldown('store.steampowered.com');
           games = await this.fetchFeaturedGames();
           break;
         case 'popular':
+          await this.waitApiCooldown('store.steampowered.com');
           games = await this.fetchPopularGames();
           break;
         case 'new':
+          await this.waitApiCooldown('store.steampowered.com');
           games = await this.fetchNewReleases();
           break;
         case 'top':
+          await this.waitApiCooldown('store.steampowered.com');
           games = await this.fetchTopRated();
           break;
         case 'free':
+          await this.waitApiCooldown('store.steampowered.com');
           games = await this.fetchFreeGames();
           break;
         case 'action':
+          await this.waitApiCooldown('store.steampowered.com');
           games = await this.fetchGamesByGenre('Action');
           break;
         case 'rpg':
+          await this.waitApiCooldown('store.steampowered.com');
           games = await this.fetchGamesByGenre('RPG');
           break;
         case 'strategy':
+          await this.waitApiCooldown('store.steampowered.com');
           games = await this.fetchGamesByGenre('Strategy');
           break;
         default:
+          await this.waitApiCooldown('store.steampowered.com');
           games = await this.fetchFeaturedGames();
       }
 
@@ -740,6 +884,7 @@ class SteamLibraryManager {
   }
 
   async fetchFeaturedGames() {
+    await this.waitApiCooldown('store.steampowered.com');
     const response = await axios.get('https://store.steampowered.com/api/featured/', {
       timeout: 10000
     });
@@ -751,6 +896,7 @@ class SteamLibraryManager {
   }
 
   async fetchPopularGames() {
+    await this.waitApiCooldown('store.steampowered.com');
     const response = await axios.get('https://store.steampowered.com/api/featuredcategories/', {
       timeout: 10000
     });
@@ -762,6 +908,7 @@ class SteamLibraryManager {
   }
 
   async fetchNewReleases() {
+    await this.waitApiCooldown('store.steampowered.com');
     const response = await axios.get('https://store.steampowered.com/api/featuredcategories/', {
       timeout: 10000
     });
@@ -774,6 +921,7 @@ class SteamLibraryManager {
 
   async fetchTopRated() {
     // Fetch top rated games from Steam API
+    await this.waitApiCooldown('store.steampowered.com');
     const response = await axios.get('https://store.steampowered.com/api/featuredcategories/', {
       timeout: 10000
     });
@@ -785,6 +933,7 @@ class SteamLibraryManager {
   }
 
   async fetchFreeGames() {
+    await this.waitApiCooldown('store.steampowered.com');
     const response = await axios.get('https://store.steampowered.com/api/featuredcategories/', {
       timeout: 10000
     });
@@ -800,6 +949,7 @@ class SteamLibraryManager {
   async fetchGamesByGenre(genre) {
     // This would typically require Steam Spy API or similar
     // For now, return filtered featured games
+    await this.waitApiCooldown('store.steampowered.com');
     const featuredGames = await this.fetchFeaturedGames();
     return featuredGames.filter(game => 
       game.tags?.some(tag => tag.name.toLowerCase().includes(genre.toLowerCase()))
@@ -906,7 +1056,8 @@ class SteamLibraryManager {
         return cachedResults;
       }
 
-      // If no cached results, search Steam API
+      // If no cached results, search Steam API (cooldown uygula)
+      await this.waitApiCooldown('store.steampowered.com');
       const response = await axios.get(`https://store.steampowered.com/api/storeSearch/?term=${encodeURIComponent(query)}&l=english&cc=US`, {
         timeout: 10000
       });
@@ -930,6 +1081,7 @@ class SteamLibraryManager {
         return cached;
       }
 
+      await this.waitApiCooldown('store.steampowered.com');
       const response = await axios.get(`https://store.steampowered.com/api/appdetails?appids=${appId}`, {
         timeout: 10000
       });
@@ -979,7 +1131,7 @@ class SteamLibraryManager {
       }
 
       // Download game files
-      const gameUrl = `https://muhammetdag.com/api/v1/game.php?steamid=${appId}`;
+      const gameUrl = `https://api.muhammetdag.com/steamlib/game/game.php?steamid=${appId}`;
       const response = await axios.get(gameUrl, { 
         responseType: 'stream',
         timeout: 30000

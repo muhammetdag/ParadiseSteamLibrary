@@ -70,19 +70,54 @@ class SteamLibraryUI {
         this.restartCountdown = null;
         this.searchTimeout = null;
         this.countryCode = null;
-        this.aiApiKey = 'API_KEY_HERE';
-        this.aiApiUrl = 'API_URL_HERE';
+        this.aiApiKey = "";
+        this.aiApiUrl = "";
         this.aiHistory = [];
+        this.appDetailsCache = {};
         
         // Online Pass sayfalama değişkenleri
         this.onlinePassGames = [];
         this.onlinePassCurrentPage = 0;
         this.onlinePassGamesPerPage = 15;
         this.onlinePassFilteredGames = [];
+        this.onlinePassNameCache = this.loadOnlinePassNameCache();
+        this.appDetailsConsecutiveNulls = 0;
+        this.appDetailsBackoffUntil = 0;
         
         // Tüm Oyunlar ve filtre sistemi kaldırıldı
         
         this.init();
+    }
+
+    getPlaceholderImage() {
+        return 'pdbanner.png';
+    }
+
+    loadOnlinePassNameCache() {
+        try {
+            const raw = localStorage.getItem('onlinePassNameCache');
+            if (!raw) return {};
+            const parsed = JSON.parse(raw);
+            return typeof parsed === 'object' && parsed ? parsed : {};
+        } catch {
+            return {};
+        }
+    }
+
+    persistOnlinePassNameCache() {
+        try {
+            localStorage.setItem('onlinePassNameCache', JSON.stringify(this.onlinePassNameCache || {}));
+        } catch {}
+    }
+
+    // Command line arguments'dan değer alma fonksiyonu
+    getCommandLineArg(argName) {
+        const args = process.argv;
+        const argIndex = args.indexOf(argName);
+        if (argIndex !== -1 && argIndex + 1 < args.length) {
+            return args[argIndex + 1];
+        }
+        return null;
     }
 
     async init() {
@@ -97,6 +132,45 @@ class SteamLibraryUI {
         
         // Başlangıçta tüm modalleri kapat (güvenlik için)
         this.closeAllModals();
+
+        // Discord davetini ilk açılışta sor
+        this.maybeAskDiscordInvite();
+    }
+
+    async maybeAskDiscordInvite() {
+        try {
+            // Config üzerinden daha önce sorulup sorulmadığını kontrol et
+            const cfg = this.config || await ipcRenderer.invoke('get-config');
+            if (cfg.discordInviteAsked) return;
+            // Sadece ilk açılışta ve kısa gecikme ile göster
+            setTimeout(() => {
+                const modal = document.getElementById('discordInviteModal');
+                if (!modal) return;
+                this.showModal('discordInviteModal');
+                const joinBtn = document.getElementById('discordInviteJoinBtn');
+                const laterBtn = document.getElementById('discordInviteLaterBtn');
+                const markAsked = async () => {
+                    try { await ipcRenderer.invoke('save-config', { discordInviteAsked: true }); } catch {}
+                };
+                if (joinBtn) {
+                    joinBtn.onclick = async () => {
+                        try {
+                            await ipcRenderer.invoke('open-in-chrome', 'https://discord.gg/paradisedev');
+                        } catch {
+                            window.open('https://discord.gg/paradisedev', '_blank');
+                        }
+                        await markAsked();
+                        this.closeModal('discordInviteModal');
+                    };
+                }
+                if (laterBtn) {
+                    laterBtn.onclick = async () => {
+                        await markAsked();
+                        this.closeModal('discordInviteModal');
+                    };
+                }
+            }, 1200);
+        } catch {}
     }
 
     async detectCountryCode() {
@@ -177,7 +251,9 @@ class SteamLibraryUI {
             // Eğer aktif sayfa onlinePass ise, online oyunlarda filtrele
             if (this.getCurrentPage() === 'onlinePass') {
                 const query = e.target.value.trim().toLowerCase();
+                
                 if (!this.onlinePassGames) return;
+                
                 if (!query) {
                     this.onlinePassFilteredGames = this.onlinePassGames;
                     this.onlinePassCurrentPage = 0;
@@ -185,15 +261,31 @@ class SteamLibraryUI {
                 } else {
                     // ID ve isim ile arama yap
                     this.onlinePassFilteredGames = this.onlinePassGames.filter(gameId => {
-                        // ID ile arama
-                        if (gameId.toString().toLowerCase().includes(query)) {
-                            return true;
+                        // Null kontrolü
+                        if (!gameId) return false;
+                        
+                        // ID ile arama (her zaman çalışır)
+                        try {
+                            if (gameId.toString().toLowerCase().includes(query)) {
+                                return true;
+                            }
+                        } catch (error) {
+                            console.error('Error converting gameId to string:', error);
+                            return false;
                         }
                         
-                        // İsim ile arama (önbellekten)
+                        // İsim ile arama (önbellekten - eğer varsa)
                         if (this.onlinePassGameNames && this.onlinePassGameNames[gameId]) {
-                            const gameName = this.onlinePassGameNames[gameId].toLowerCase();
-                            return gameName.includes(query);
+                            try {
+                                const gameName = this.onlinePassGameNames[gameId].toLowerCase();
+                                return gameName.includes(query);
+                            } catch (error) {
+                                console.error('Error processing game name:', error);
+                                return false;
+                            }
+                        } else {
+                            // İsimler henüz yüklenmemişse, sadece ID ile arama yap
+                            // Bu sayede arama hemen çalışır
                         }
                         
                         return false;
@@ -218,15 +310,28 @@ class SteamLibraryUI {
                     } else {
                         // ID ve isim ile arama yap
                         this.onlinePassFilteredGames = this.onlinePassGames.filter(gameId => {
-                            // ID ile arama
-                            if (gameId.toString().toLowerCase().includes(query)) {
-                                return true;
+                            // Null kontrolü
+                            if (!gameId) return false;
+                            
+                            // ID ile arama (her zaman çalışır)
+                            try {
+                                if (gameId.toString().toLowerCase().includes(query)) {
+                                    return true;
+                                }
+                            } catch (error) {
+                                console.error('Error converting gameId to string:', error);
+                                return false;
                             }
                             
-                            // İsim ile arama (önbellekten)
+                            // İsim ile arama (önbellekten - eğer varsa)
                             if (this.onlinePassGameNames && this.onlinePassGameNames[gameId]) {
-                                const gameName = this.onlinePassGameNames[gameId].toLowerCase();
-                                return gameName.includes(query);
+                                try {
+                                    const gameName = this.onlinePassGameNames[gameId].toLowerCase();
+                                    return gameName.includes(query);
+                                } catch (error) {
+                                    console.error('Error processing game name:', error);
+                                    return false;
+                                }
                             }
                             
                             return false;
@@ -531,7 +636,14 @@ class SteamLibraryUI {
             pageEl.classList.add('active');
             pageEl.style.display = '';
             if (page === 'onlinePass') {
-                this.loadOnlinePassGames();
+                // Aynı anda tek yükleme: bir önceki yükleme bitmeden tekrar çağırma
+                if (this.loadingOnlinePass) return;
+                this.loadingOnlinePass = true;
+                // İçeriği temizle (idempotent render için)
+                pageEl.innerHTML = '';
+                this.loadOnlinePassGames().finally(() => {
+                    this.loadingOnlinePass = false;
+                });
             } else if (page === 'manualInstall') {
                 this.setupManualInstallListeners();
             }
@@ -860,7 +972,7 @@ class SteamLibraryUI {
                 const fallbackCard = document.createElement('div');
                 fallbackCard.className = 'game-card';
                 fallbackCard.innerHTML = `
-                    <img src="${game.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${game.appid}/header.jpg`}" alt="${game.name}" class="game-image" loading="lazy" style="width:100%;height:180px;object-fit:cover;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.18);" onerror="this.src='https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok'">
+                    <img src="${game.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${game.appid}/header.jpg`}" alt="${game.name}" class="game-image" loading="lazy" style="width:100%;height:180px;object-fit:cover;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.18);" onerror="this.onerror=null;this.src='pdbanner.png'">
                     <div class="game-info">
                         <h3 class="game-title" style="font-size:18px;font-weight:700;margin-bottom:4px;">${game.name}</h3>
                         <div class="game-meta" style="margin-bottom:6px;">
@@ -959,7 +1071,7 @@ class SteamLibraryUI {
         }
 
         card.innerHTML = `
-            <img src="${imageUrl}" alt="${game.name}" class="game-image" loading="lazy" style="width:100%;height:180px;object-fit:cover;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.18);" onerror="this.src='https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok'">
+            <img src="${imageUrl}" alt="${game.name}" class="game-image" loading="lazy" style="width:100%;height:180px;object-fit:cover;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.18);" onerror="this.onerror=null;this.src='pdbanner.png'">
             <div class="game-info">
                 <h3 class="game-title" style="font-size:18px;font-weight:700;margin-bottom:4px;">${game.name}</h3>
                 <div class="game-meta" style="margin-bottom:6px;">
@@ -989,9 +1101,13 @@ class SteamLibraryUI {
             // Açıklamayı sade ve kısa göster
             let desc = '';
             try {
-                const res = await fetch(`https://store.steampowered.com/api/appdetails?appids=${featuredGame.appid}&cc=${cc}&l=${selectedLang}`);
-                const data = await res.json();
-                const gameData = data[featuredGame.appid]?.data;
+                let gameData = this.appDetailsCache[featuredGame.appid];
+                if (!gameData) {
+                    const res = await fetch(`https://store.steampowered.com/api/appdetails?appids=${featuredGame.appid}&cc=${cc}&l=${selectedLang}`);
+                    const data = await res.json();
+                    gameData = data[featuredGame.appid]?.data;
+                    if (gameData) this.appDetailsCache[featuredGame.appid] = gameData;
+                }
                 desc = gameData?.short_description || '';
                 // HTML etiketlerini temizle ve kısalt
                 desc = desc.replace(/<[^>]+>/g, '').trim();
@@ -1043,7 +1159,11 @@ class SteamLibraryUI {
         };
         await update();
         if (this.heroInterval) clearInterval(this.heroInterval);
-        this.heroInterval = setInterval(update, 8000);
+        // Daha seyrek güncelle (15s) ve görünür ise çalıştır
+        this.heroInterval = setInterval(() => {
+            if (document.hidden) return; // sekme görünür değilse atla
+            update();
+        }, 15000);
     }
 
     async showGameDetails(game) {
@@ -1326,7 +1446,7 @@ class SteamLibraryUI {
         }
         // Oyun dosyası API kontrolü (404 ise oyun yok)
         try {
-            const res = await fetch(`https://muhammetdag.com/api/v1/game.php?steamid=${appId}`);
+            const res = await fetch(`https://api.muhammetdag.com/steamlib/game/game.php?steamid=${appId}`);
             if (res.status === 404) {
                 this.showNotification('error', 'game_not_found', 'error');
                 return;
@@ -1796,9 +1916,9 @@ class SteamLibraryUI {
                     if (resp.ok) return url;
                 } catch {}
             }
-            return 'https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok';
+            return 'pdbanner.png';
         } catch {
-            return 'https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok';
+            return 'pdbanner.png';
         }
     }
 
@@ -3301,6 +3421,7 @@ class SteamLibraryUI {
     renderSettingsPage() {
         const settingsContainer = document.getElementById('settings-page');
         if (!settingsContainer) return;
+        const currentVersion = (window?.process?.versions?.electron && window?.require?.main?.module?.exports) ? '' : '';
         settingsContainer.innerHTML = `
             <div class="language-select-label">${this.translate('language')}</div>
             <div class="language-select-list">
@@ -3321,6 +3442,12 @@ class SteamLibraryUI {
                     <input type="checkbox" id="videoMutedToggle" ${this.config.videoMuted ? 'checked' : ''}>
                     <span data-i18n="mute_videos">${this.translate('mute_videos')}</span>
                 </label>
+                <br>
+                <div id="versionRow" class="setting-item" style="display:flex;align-items:center;gap:8px;">
+                    <span style="opacity:.8;">Sürüm:</span>
+                    <span id="appVersion">Yükleniyor...</span>
+                    <a id="releaseLink" href="#" target="_blank" style="margin-left:8px;color:#00bfff;">GitHub</a>
+                </div>
             </div>
         `;
         
@@ -3347,6 +3474,99 @@ class SteamLibraryUI {
                 this.updateConfig({ videoMuted: e.target.checked });
             });
         }
+
+        // Versiyon bilgisini çek
+        this.loadAndRenderVersionInfo();
+    }
+
+    async loadAndRenderVersionInfo() {
+        try {
+            const appVersionEl = document.getElementById('appVersion');
+            const releaseLinkEl = document.getElementById('releaseLink');
+            if (!appVersionEl || !releaseLinkEl) return;
+
+			const headers = {
+				'Accept': 'application/vnd.github+json',
+				'User-Agent': 'ParadiseSteamLibrary'
+			};
+
+			let latestTag = null;
+			let latestUrl = 'https://github.com/muhammetdag/ParadiseSteamLibrary/releases';
+
+			// 1) Releases/latest dene
+			try {
+				const relResp = await fetch('https://api.github.com/repos/muhammetdag/ParadiseSteamLibrary/releases/latest', { headers, cache: 'no-store' });
+				if (relResp.ok) {
+					const data = await relResp.json();
+					latestTag = data.tag_name || null;
+					latestUrl = data.html_url || latestUrl;
+				}
+			} catch {}
+
+			// 2) Düşüş: tags endpoint
+			if (!latestTag) {
+				try {
+					const tagsResp = await fetch('https://api.github.com/repos/muhammetdag/ParadiseSteamLibrary/tags', { headers, cache: 'no-store' });
+					if (tagsResp.ok) {
+						const arr = await tagsResp.json();
+						if (Array.isArray(arr) && arr.length > 0) {
+							latestTag = arr[0]?.name || null;
+						}
+					}
+				} catch {}
+			}
+
+			// UI'yi yaz
+			appVersionEl.textContent = latestTag || 'v?';
+			releaseLinkEl.href = latestUrl;
+
+			// Yerel version ile karşılaştır
+            // Yerel sürüm: main process'ten app.getVersion()
+            let localVersion = await ipcRenderer.invoke('get-app-version');
+            if (!localVersion) {
+                try { localVersion = require('../../package.json').version; } catch {}
+            }
+            if (localVersion && latestTag) {
+                const normalizedLocal = localVersion.toString().startsWith('v') ? localVersion : `v${localVersion}`;
+                if (this.isSemverNewer(latestTag, normalizedLocal)) {
+                    // Modal ile göster
+                    const latestEl = document.getElementById('updateLatest');
+                    const currentEl = document.getElementById('updateCurrent');
+                    if (latestEl) latestEl.textContent = latestTag;
+                    if (currentEl) currentEl.textContent = normalizedLocal;
+                    const openBtn = document.getElementById('openReleaseBtn');
+                    const laterBtn = document.getElementById('updateLaterBtn');
+                    if (openBtn) {
+                        openBtn.onclick = () => {
+                            window.open('https://github.com/muhammetdag/ParadiseSteamLibrary/releases', '_blank');
+                            this.closeModal('updateModal');
+                        };
+                    }
+                    if (laterBtn) {
+                        laterBtn.onclick = () => this.closeModal('updateModal');
+                    }
+                    this.showModal('updateModal');
+                }
+            }
+		} catch (e) {
+			const appVersionEl = document.getElementById('appVersion');
+			const releaseLinkEl = document.getElementById('releaseLink');
+			if (appVersionEl) appVersionEl.textContent = (window?.require ? require('../../package.json').version : 'v?');
+			if (releaseLinkEl) releaseLinkEl.href = 'https://github.com/muhammetdag/ParadiseSteamLibrary/releases';
+		}
+    }
+
+    // Basit semver karşılaştırma: vA.B.C biçimi bekler
+    isSemverNewer(a, b) {
+        const parse = (v) => {
+            const m = (v || '').toString().replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)/);
+            return m ? [parseInt(m[1]), parseInt(m[2]), parseInt(m[3])] : [0,0,0];
+        };
+        const [a1,a2,a3] = parse(a);
+        const [b1,b2,b3] = parse(b);
+        if (a1 !== b1) return a1 > b1;
+        if (a2 !== b2) return a2 > b2;
+        return a3 > b3;
     }
 
     setCurrentLanguage(lang) {
@@ -3399,23 +3619,55 @@ class SteamLibraryUI {
         const lang = this.getSelectedLang();
         const onlineGrid = document.getElementById('onlinePassPage');
         if (!onlineGrid) return;
+        // Önce mevcut interval/async durumlarını sıfırla
+        this.onlinePassCurrentPage = 0;
+        // Yinelenen grid eklenmesini engellemek için önce temizle
+        onlineGrid.innerHTML = '';
+        
         onlineGrid.innerHTML = `<div class='page-header' style='width:100%;display:flex;justify-content:center;align-items:center;margin-bottom:24px;'><h1 style='font-size:2.2rem;font-weight:800;color:#00bfff;display:inline-block;'>${this.translate('online_pass')}</h1></div><div style="color:#fff;padding:16px;">${this.translate('online_games_loading')}</div>`;
+        
         try {
             // Yeni API endpoint'ini kullan
-            const res = await fetch('https://api.muhammetdag.com/steamlib/online/online_fix_games.json');
+            const res = await fetch('https://api.muhammetdag.com/steamlib/online/online_fix_games.json', { cache: 'no-store' });
             const data = await res.json();
-            if (!Array.isArray(data)) throw new Error('Online oyun listesi alınamadı');
             
-            // Oyunları appid'ye göre düzenle
-            this.onlinePassGames = data.map(game => game.appid);
+            if (!Array.isArray(data)) {
+                throw new Error('Online oyun listesi alınamadı');
+            }
+            
+            // Oyunları appid'ye göre düzenle ve null değerleri filtrele
+            this.onlinePassGames = data
+                .map(game => game.appid)
+                .filter(appid => appid != null && appid !== undefined && appid !== '');
             this.onlinePassFilteredGames = this.onlinePassGames;
             this.onlinePassCurrentPage = 0;
             
-            // Oyun isimlerini önbellekle
-            await this.cacheOnlineGameNames();
-            
+            // Önce oyunları ID'lerle göster, sonra isimleri arka planda yükle
             this.renderOnlinePassGames();
+            
+            // Oyun isimlerini arka planda önbellekle (lazy loading)
+            this.cacheOnlineGameNames().then(() => {
+                // İsimler yüklendikten sonra sayfayı yeniden render et
+                this.renderOnlinePassGames();
+                // Loading mesajını kaldır
+                const loadingMsg = onlineGrid.querySelector('.loading-names');
+                if (loadingMsg) loadingMsg.remove();
+            }).catch(error => {
+                console.error('Error caching game names:', error);
+                // Hata durumunda loading mesajını kaldır
+                const loadingMsg = onlineGrid.querySelector('.loading-names');
+                if (loadingMsg) loadingMsg.remove();
+            });
+            
+            // Loading mesajı ekle
+            const loadingMsg = document.createElement('div');
+            loadingMsg.className = 'loading-names';
+            loadingMsg.style.cssText = 'color:#00bfff;padding:8px;text-align:center;font-size:14px;';
+            loadingMsg.textContent = 'Oyun isimleri yükleniyor...';
+            onlineGrid.appendChild(loadingMsg);
+            
         } catch (err) {
+            console.error('Error loading online pass games:', err);
             onlineGrid.innerHTML = `<div style='color:#fff;padding:16px;'>${this.translate('online_games_load_failed')}: ${err.message}</div>`;
         }
     }
@@ -3442,13 +3694,22 @@ class SteamLibraryUI {
         const currentPageGames = games.slice(startIndex, endIndex);
         const totalPages = Math.ceil(games.length / this.onlinePassGamesPerPage);
         
-        // Oyun grid'ini oluştur
+        // Oyun grid'ini oluştur (id ile tekil)
+        const existing = document.getElementById('online-pass-grid');
+        if (existing) existing.remove();
         const grid = document.createElement('div');
         grid.className = 'online-pass-grid';
+        grid.id = 'online-pass-grid';
         grid.style.padding = '24px 0 0 0';
         
         // Oyun kartlarını asenkron olarak oluştur
         const createGameCard = async (gameId) => {
+            // Null kontrolü
+            if (!gameId) {
+                console.warn('Skipping null gameId in createGameCard');
+                return null;
+            }
+            
             const card = document.createElement('div');
             card.className = 'game-card';
             card.style.background = '#181c22';
@@ -3457,23 +3718,32 @@ class SteamLibraryUI {
             card.style.boxShadow = '0 2px 12px #0002';
             
             try {
-                // Steam API'den oyun bilgilerini çek
-                const steamResponse = await safeSteamFetch(`https://store.steampowered.com/api/appdetails?appids=${gameId}&l=turkish`);
-                const steamData = await steamResponse.json();
-                
                 let gameName = `Oyun ID: ${gameId}`;
                 let imageUrl = `https://cdn.akamai.steamstatic.com/steam/apps/${gameId}/header.jpg`;
                 
-                if (steamData[gameId] && steamData[gameId].success && steamData[gameId].data) {
-                    const gameData = steamData[gameId].data;
-                    gameName = gameData.name || gameName;
-                    imageUrl = gameData.header_image || imageUrl;
+                // Önce cache'den isim kontrol et
+                if (this.onlinePassGameNames && this.onlinePassGameNames[gameId]) {
+                    gameName = this.onlinePassGameNames[gameId];
+                } else {
+                    // Cache'de yoksa Steam API'den çek (sadece gerekirse)
+                    try {
+                        const steamResponse = await safeSteamFetch(`https://store.steampowered.com/api/appdetails?appids=${gameId}&l=turkish`);
+                        const steamData = await steamResponse.json();
+                        
+                        if (steamData[gameId] && steamData[gameId].success && steamData[gameId].data) {
+                            const gameData = steamData[gameId].data;
+                            gameName = gameData.name || gameName;
+                            imageUrl = gameData.header_image || imageUrl;
+                        }
+                    } catch (steamError) {
+                        console.warn(`Could not fetch Steam data for game ${gameId}:`, steamError);
+                    }
                 }
                 
                 const steamUrl = `https://store.steampowered.com/app/${gameId}`;
                 
                 card.innerHTML = `
-                    <img src="${imageUrl}" alt="${gameName}" class="game-image" loading="lazy" style="width:100%;height:160px;object-fit:cover;border-radius:12px 12px 0 0;" onerror="this.src='https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok'">
+                    <img src="${imageUrl}" alt="${gameName}" class="game-image" loading="lazy" style="width:100%;height:160px;object-fit:cover;border-radius:12px 12px 0 0;" onerror="this.onerror=null;this.src='pdbanner.png'">
                     <div class="game-info" style="padding:12px;">
                         <h3 class="game-title" style="font-size:18px;font-weight:700;margin-bottom:4px;">${gameName}</h3>
                         <div class="game-meta" style="margin-bottom:6px;">
@@ -3489,7 +3759,7 @@ class SteamLibraryUI {
                 const imageUrl = `https://cdn.akamai.steamstatic.com/steam/apps/${gameId}/header.jpg`;
                 
                 card.innerHTML = `
-                    <img src="${imageUrl}" alt="Game ${gameId}" class="game-image" loading="lazy" style="width:100%;height:160px;object-fit:cover;border-radius:12px 12px 0 0;" onerror="this.src='https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok'">
+                    <img src="${imageUrl}" alt="Game ${gameId}" class="game-image" loading="lazy" style="width:100%;height:160px;object-fit:cover;border-radius:12px 12px 0 0;" onerror="this.onerror=null;this.src='pdbanner.png'">
                     <div class="game-info" style="padding:12px;">
                         <h3 class="game-title" style="font-size:18px;font-weight:700;margin-bottom:4px;">${this.translate('game_id')}: ${gameId}</h3>
                         <div class="game-meta" style="margin-bottom:6px;">
@@ -3508,7 +3778,8 @@ class SteamLibraryUI {
         const cardPromises = currentPageGames.map(game => createGameCard(game));
         const cards = await Promise.all(cardPromises);
         
-        cards.forEach(card => {
+        // Null kartları filtrele
+        cards.filter(card => card !== null).forEach(card => {
             grid.appendChild(card);
         });
         onlineGrid.appendChild(grid);
@@ -3722,7 +3993,7 @@ class SteamLibraryUI {
         }
         
         // Hiçbiri çalışmazsa varsayılan görsel
-        return 'https://via.placeholder.com/616x353/2a2a2a/666666?text=Görsel+Yok';
+        return 'pdbanner.png';
     }
 
     setupManualInstallListeners() {
@@ -3981,15 +4252,31 @@ class SteamLibraryUI {
             // Arama yap
             const searchTerm = query.toLowerCase().trim();
             this.onlinePassFilteredGames = this.onlinePassGames.filter(gameId => {
-                // ID ile arama
-                if (gameId.toString().includes(searchTerm)) {
-                    return true;
+                // Null kontrolü
+                if (!gameId) return false;
+                
+                // ID ile arama (her zaman çalışır)
+                try {
+                    if (gameId.toString().includes(searchTerm)) {
+                        return true;
+                    }
+                } catch (error) {
+                    console.error('Error converting gameId to string:', error);
+                    return false;
                 }
                 
-                // İsim ile arama (önbellekten)
+                // İsim ile arama (önbellekten - eğer varsa)
                 if (this.onlinePassGameNames && this.onlinePassGameNames[gameId]) {
-                    const gameName = this.onlinePassGameNames[gameId].toLowerCase();
-                    return gameName.includes(searchTerm);
+                    try {
+                        const gameName = this.onlinePassGameNames[gameId].toLowerCase();
+                        return gameName.includes(searchTerm);
+                    } catch (error) {
+                        console.error('Error processing game name:', error);
+                        return false;
+                    }
+                } else {
+                    // İsimler henüz yüklenmemişse, sadece ID ile arama yap
+                    // Bu sayede arama hemen çalışır
                 }
                 
                 return false;
@@ -4003,29 +4290,69 @@ class SteamLibraryUI {
 
     // Online oyun isimlerini önbellekle
     async cacheOnlineGameNames() {
-        if (!this.onlinePassGames || this.onlinePassGameNames) return;
+        if (!this.onlinePassGames) return;
+        if (this.onlinePassGameNames) return;
         
         this.onlinePassGameNames = {};
         
-        // Tüm oyun isimlerini paralel olarak çek
-        const promises = this.onlinePassGames.map(async (gameId) => {
-            try {
-                const steamResponse = await safeSteamFetch(`https://store.steampowered.com/api/appdetails?appids=${gameId}&l=turkish`);
-                const steamData = await steamResponse.json();
-                
-                if (steamData[gameId] && steamData[gameId].success && steamData[gameId].data) {
-                    const gameData = steamData[gameId].data;
-                    this.onlinePassGameNames[gameId] = gameData.name || `${this.translate('game_id')}: ${gameId}`;
-                } else {
-                    this.onlinePassGameNames[gameId] = `${this.translate('game_id')}: ${gameId}`;
-                }
-            } catch (error) {
-                console.error('Error caching game name:', error);
-                this.onlinePassGameNames[gameId] = `${this.translate('game_id')}: ${gameId}`;
-            }
-        });
+        // Tüm oyun isimlerini paralel olarak çek (rate limiting ile)
+        const batchSize = 5; // Aynı anda en fazla 5 istek
+        const delay = 1200; // Her batch arasında 1.2s bekle
         
-        await Promise.all(promises);
+        for (let i = 0; i < this.onlinePassGames.length; i += batchSize) {
+            const batch = this.onlinePassGames.slice(i, i + batchSize);
+            
+            const batchPromises = batch.map(async (gameId) => {
+                // Null kontrolü
+                if (!gameId) {
+                    console.warn('Skipping null gameId in cacheOnlineGameNames');
+                    return;
+                }
+                
+                try {
+                    // Önce kalıcı cache'i kontrol et
+                    if (this.onlinePassNameCache && this.onlinePassNameCache[gameId]) {
+                        this.onlinePassGameNames[gameId] = this.onlinePassNameCache[gameId];
+                        return;
+                    }
+                    // 403'lerde geri çekilmek için geçici backoff uygula
+                    const now = Date.now();
+                    if (this.appDetailsBackoffUntil && now < this.appDetailsBackoffUntil) {
+                        // backoff süresinde istek atma, sadece ID bırak
+                        this.onlinePassGameNames[gameId] = `${this.translate('game_id')}: ${gameId}`;
+                        return;
+                    }
+                    // Güvenli detay çekme
+                    const gameData = await fetchSteamAppDetails(gameId, this.countryCode || 'TR', 'turkish');
+                    
+                    if (gameData && gameData.name) {
+                        this.onlinePassGameNames[gameId] = gameData.name;
+                        this.onlinePassNameCache[gameId] = gameData.name;
+                        this.appDetailsConsecutiveNulls = 0; // sıfırla
+                    } else {
+                        this.onlinePassGameNames[gameId] = `${this.translate('game_id')}: ${gameId}`;
+                        this.appDetailsConsecutiveNulls++;
+                    }
+                } catch (error) {
+                    console.error('Error caching game name:', error);
+                    this.onlinePassGameNames[gameId] = `${this.translate('game_id')}: ${gameId}`;
+                    this.appDetailsConsecutiveNulls++;
+                }
+            });
+            
+            await Promise.all(batchPromises);
+            this.persistOnlinePassNameCache();
+            
+            // Son batch değilse bekle
+            if (i + batchSize < this.onlinePassGames.length) {
+                // Eğer art arda 403 nedeniyle veri alamıyorsak backoff uygula
+                if (this.appDetailsConsecutiveNulls >= batchSize) {
+                    this.appDetailsBackoffUntil = Date.now() + 60_000; // 60s bekle
+                    this.appDetailsConsecutiveNulls = 0; // sayaç sıfırla
+                }
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
     }
 
     // Test ZIP extraction function - Debugging için
@@ -4061,10 +4388,11 @@ class SteamLibraryUI {
 
         this.refreshActiveUsersCount();
         
-        // Her 30 saniyede bir aktif kullanıcı sayısını güncelle
-        setInterval(() => {
+        // Her 60 saniyede bir aktif kullanıcı sayısını güncelle (daha az istek)
+        this.activeUsersInterval = setInterval(() => {
+            if (document.hidden) return;
             this.refreshActiveUsersCount();
-        }, 30000); // 30 saniye
+        }, 60000);
     }
 
     async refreshActiveUsersCount() {

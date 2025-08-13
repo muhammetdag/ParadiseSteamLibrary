@@ -68,49 +68,34 @@ npm run build-win
 npm run build
 ```
 
-## [v2.0.2] - 12.08.2025
+## [v2.0.3] - 13.08.2025
 
-# Paradise Steam Library v2.0.2
+# Paradise Steam Library v2.0.3
 
-## 🖼 Arayüz Güncellemesi
-- Tüm sayfalarda tasarım düzenlemesi yapıldı.
-- Arayüz daha kompakt hale getirildi.
-- İkonlar düzeltildi.
-- Daha performanslı bir arayüz elde edildi.
+## Performans Güçlendirmesi
+- OnlinePass sayfası geç açılıyordu, daha optimizasyonlu hale getirildi.
 
+## AI Güçlendirmesi
+- Uygulama içi yapayzeka artık daha çeşitli ve dosta yakın davranmaka.
 
-## 🎮 Yeni Özellikler
+## Bug Fix
+- Oyun indirmede problem vardı, fixlendi.
+- Yapayzeka kullanılamıyordu, fixlendi.
+- OnlinePass sayfasında arama sistemi çalışmıyordu, fixlendi.
 
-### 🔐 Yeni OnlinePass Ssitemi
-- Tamamen yenilenmiş OnlinePass sistemi
-- 1400'den fazla online oyun desteği
-- Manuel kurulum ile sorunsuz oynama desteği
-
-### 🤖 Yerleşik AI Sohbet
-- Uygulamanın sağ alt köşesine AI sohbet yardımcısı eklendi.
-- Discord ve harici yerler yerine, uygulama içerisinden destek alabilirsiniz.
-- Sohbet geçmişi yerel oturumda tutulur ve performans için son 50 mesaj saklanır.
-
-### 🌍 Çok Dilli Sistem Bilgilendirmesi
-- Azerbaycan dili için dil desteği getirildi.
-- OnlinePass ve manuel kurulum sayfaları için dil desteği entegre edildi.
-
-## 🔧 Teknik İyileştirmeler
-
-### Backend
-- API erişim sorunu yaşanmaması adına subdomain'e aktarıldı.
- - AI proxy servisi eklendi ve CORS uyumlu hale getirildi.
-
+**Artık daha optimizasyonlu, sorunsuz bir uygulama haline geldi.**
 
 ---
 
 ## 🤝 Katkıda Bulunma
 
+```
 1. Fork yapın
 2. Feature branch oluşturun (`git checkout -b feature/amazing-feature`)
 3. Commit yapın (`git commit -m 'Add amazing feature'`)
 4. Push yapın (`git push origin feature/amazing-feature`)
 5. Pull Request açın
+```
 
 ## 📄 Lisans
 
