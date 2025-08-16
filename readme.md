@@ -99,7 +99,7 @@ npm run build
 
 ## 📄 Lisans
 
-Bu proje MIT lisansı altında lisanslanmıştır. Detaylar için `LICENSE` dosyasına bakın.
+Bu proje lisanslanmıştır. Detaylar için `LICENSE` dosyasına bakın.
 
 ## 👨‍💻 Geliştirici
 
