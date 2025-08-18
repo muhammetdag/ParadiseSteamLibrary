@@ -1,110 +1,112 @@
 # Paradise Steam Library
 
-Modern Steam Kütüphane Yöneticisi - Gelişmiş özellikler ve kullanıcı dostu arayüz ile Steam oyunlarınızı yönetin.
+Modern Steam Library Manager - Manage your Steam games with advanced features and a user-friendly interface.
 
-## 🚀 Özellikler
+## 🚀 Features
 
-### 📚 Steam Kütüphane Yönetimi
-- **Oyun Ekleme**: Steam kütüphanenize oyun ekleyin
-- **DLC Desteği**: Oyunlarla birlikte DLC'leri de ekleyin
-- **Kütüphane Görüntüleme**: Mevcut oyunlarınızı görüntüleyin
-- **Oyun Silme**: Kütüphaneden oyunları kaldırın
+### 📚 Steam Library Management
+- **Add Games**: Add games to your Steam library
+- **DLC Support**: Add DLCs along with games
+- **Library Viewing**: View your current games
+- **Game Removal**: Remove games from your library
 
-### 🌐 Online Oyun Sistemi
-- **Online Pass**: Online oyunları indirin ve kurun
-- **Steam API Entegrasyonu**: Gerçek oyun isimleri ve görselleri
-- **Otomatik Görsel**: Steam CDN'den otomatik görsel çekme
-- **Akıllı Fallback**: API hatası durumunda yedek sistem
+### 🌐 Online Game System
+- **Online Pass**: Download and install online games
+- **Steam API Integration**: Real game names and images
+- **Automatic Image**: Automatically retrieve images from Steam CDN
+- **Smart Fallback**: Backup system in case of API error
 
-### 🎮 Manuel Oyun Kurulumu
-- **ZIP Dosyası Desteği**: Manuel ZIP dosyalarını kurun
-- **Otomatik Algılama**: Oyun ID'sini otomatik algılar
-- **Steam Entegrasyonu**: Steam kütüphanesine otomatik ekleme
+### 🎮 Manual Game Installation
+- **ZIP File Support**: Install manual ZIP files
+- **Automatic Detection**: Automatically detects the game ID
+- **Steam Integration**: Automatically adds to the Steam library
 
-### 🤖 Yerleşik AI Sohbet
-- Uygulamanın sağ alt köşesinde AI sohbet yardımcısı.
-- Discord ve harici yerler yerine, uygulama içerisinden destek alabilirsiniz.
+### 🤖 Built-in AI Chat
+- AI chat assistant in the lower right corner of the app.
+- Instead of Discord and external sites, you can get support from within the app.
 
-### 🎨 Modern Arayüz
-- **Dark Theme**: Göz yormayan koyu tema
-- **Responsive Design**: Tüm ekran boyutlarına uyumlu
-- **Animasyonlar**: Akıcı kullanıcı deneyimi
-- **Türkçe Arayüz**: Tam Türkçe desteği
+### 🎨 Modern Interface
+- **Dark Theme**: Eye-friendly dark theme
+- **Responsive Design**: Compatible with all screen sizes
+- **Animations**: Smooth user experience
+- **Turkish Interface**: Full Turkish support
 
-### 🔧 Gelişmiş Özellikler
-- **Discord RPC**: Discord'da oyun durumunu göster
-- **Steam Restart**: Steam'i otomatik yeniden başlat
-- **Arama Sistemi**: Oyunlarda hızlı arama
-- **Kategoriler**: Oyunları kategorilere göre filtrele
+### 🔧 Advanced Features
+- **Discord RPC**: Show your game status on Discord
+- **Steam Restart**: Automatically restart Steam
+- **Search System**: Quick search in games
+- **Categories**: Filter games by category
 
-## 📦 Kurulum
+## 📦 Installation
 
-### Gereksinimler
+### Requirements
 - Node.js 16+ 
-- npm veya yarn
+- npm or yarn
 - Windows 10/11
 
-### Geliştirme Ortamı
+### Development Environment
 ```bash
-# Bağımlılıkları yükle
+# Install dependencies
 npm install
 
-# Geliştirme modunda çalıştır
+# Run in development mode
 npm run dev
 
-# Normal modda çalıştır
+# Run in normal mode
 npm start
 ```
 
 ### Portable Build
 ```bash
-# Portable exe oluştur
+# Create portable exe
 npm run build-portable
 
-# Tüm Windows build'leri
+# All Windows builds
 npm run build-win
 
-# Sadece installer
+# Only installer
 npm run build
 ```
 
-## [v2.0.3] - 13.08.2025
+## [v2.0.3] - 08/13/2025
 
 # Paradise Steam Library v2.0.3
 
-## Performans Güçlendirmesi
-- OnlinePass sayfası geç açılıyordu, daha optimizasyonlu hale getirildi.
+## Performance Enhancement
+- The OnlinePass page was slow to load, now optimized.
 
-## AI Güçlendirmesi
-- Uygulama içi yapayzeka artık daha çeşitli ve dosta yakın davranmaka.
+## AI Enhancement
+- In-app AI now behaves in a more varied and friendly manner.
 
-## Bug Fix
-- Oyun indirmede problem vardı, fixlendi.
-- Yapayzeka kullanılamıyordu, fixlendi.
-- OnlinePass sayfasında arama sistemi çalışmıyordu, fixlendi.
+## Bug Fixes
+- There was an issue with game downloads, which has been fixed.
+- AI was not functioning, which has been fixed.
+- The search system on the OnlinePass page was not working, which has been fixed.
 
-**Artık daha optimizasyonlu, sorunsuz bir uygulama haline geldi.**
-
----
-
-## 🤝 Katkıda Bulunma
-
-```
-1. Fork yapın
-2. Feature branch oluşturun (`git checkout -b feature/amazing-feature`)
-3. Commit yapın (`git commit -m 'Add amazing feature'`)
-4. Push yapın (`git push origin feature/amazing-feature`)
-5. Pull Request açın
-```
-
-## 📄 Lisans
-
-Bu proje lisanslanmıştır. Detaylar için `LICENSE` dosyasına bakın.
-
-## 👨‍💻 Geliştirici
-
-**Muhammet DAĞ** - Modern Steam kütüphane yönetimi için geliştirilmiştir.
+**The application is now more optimized and runs smoothly.**
 
 ---
 
-⭐ Bu projeyi beğendiyseniz yıldız vermeyi unutmayın! 
+## 🤝 Contribute
+
+```
+1. Fork the project
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit (`git commit -m ‘Add amazing feature’`)
+4. Push (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+```
+
+## 📄 License
+
+This project is licensed. For details, see the `LICENSE` file.
+
+## 👨‍💻 Developer
+
+**Muhammet DAĞ** - Developed for modern Steam library management.
+
+---
+
+⭐ If you like this project, don't forget to star it! 
+
+Translated with DeepL.com (free version)
