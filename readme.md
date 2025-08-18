@@ -29,7 +29,6 @@ Modern Steam Library Manager - Manage your Steam games with advanced features an
 - **Dark Theme**: Eye-friendly dark theme
 - **Responsive Design**: Compatible with all screen sizes
 - **Animations**: Smooth user experience
-- **Turkish Interface**: Full Turkish support
 
 ### 🔧 Advanced Features
 - **Discord RPC**: Show your game status on Discord
