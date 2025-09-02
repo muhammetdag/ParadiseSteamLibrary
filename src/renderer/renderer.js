@@ -1655,8 +1655,16 @@ class SteamLibraryUI {
 
         const hamburgerBtn = document.getElementById('hamburgerMenuBtn');
         const bubbleMenu = document.getElementById('bubbleMenu');
-        hamburgerBtn.addEventListener('click', () => {
+        hamburgerBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
             bubbleMenu.classList.toggle('active');
+        });
+
+        // Menü dışına tıklandığında kapat
+        document.addEventListener('click', (e) => {
+            if (!hamburgerBtn.contains(e.target) && !bubbleMenu.contains(e.target)) {
+                bubbleMenu.classList.remove('active');
+            }
         });
         document.getElementById('bubbleSettings').addEventListener('click', () => {
             this.switchPage('settings');
