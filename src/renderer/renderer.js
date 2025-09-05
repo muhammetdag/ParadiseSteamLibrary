@@ -16,6 +16,11 @@ async function safeSteamFetch(url, options = {}) {
             ...options
         };
         
+        // Signal parametresi varsa ekle
+        if (options.signal) {
+            defaultOptions.signal = options.signal;
+        }
+        
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), defaultOptions.timeout);
         
@@ -32,14 +37,14 @@ async function safeSteamFetch(url, options = {}) {
     }
 }
 
-async function fetchSteamAppDetails(appid, cc, lang) {
+async function fetchSteamAppDetails(appid, cc, lang, signal = null) {
     try {
         let url = `https://store.steampowered.com/api/appdetails?appids=${appid}&cc=${cc}&l=${lang}`;
-        let res = await safeSteamFetch(url, { timeout: 15000 });
+        let res = await safeSteamFetch(url, { timeout: 15000, signal });
 
         if (res.status === 403 && !(cc === 'TR' && lang === 'turkish')) {
             await new Promise(r => setTimeout(r, 400));
-            res = await safeSteamFetch(`https://store.steampowered.com/api/appdetails?appids=${appid}&cc=TR&l=turkish`, { timeout: 15000 });
+            res = await safeSteamFetch(`https://store.steampowered.com/api/appdetails?appids=${appid}&cc=TR&l=turkish`, { timeout: 15000, signal });
         }
 
         if (!res.ok) return null;
@@ -83,13 +88,52 @@ class SteamLibraryUI {
         this.appDetailsConsecutiveNulls = 0;
         this.appDetailsBackoffUntil = 0;
         
+        // Token cache - bir kere alıp kullan
+        this.cachedToken = null;
+        this.tokenCacheExpiry = 0;
+        
         
         
         window.ui = this;
         
         this.setupIpcListeners();
+        this.setupGlobalErrorHandlers();
         
         this.init();
+    }
+
+    setupGlobalErrorHandlers() {
+        // Global error handler - tanımlanmamış değişkenleri yakalar
+        window.addEventListener('error', (event) => {
+            console.warn(`⚠️ JavaScript Hatası:`, {
+                message: event.message,
+                filename: event.filename,
+                lineno: event.lineno,
+                colno: event.colno,
+                error: event.error
+            });
+            
+            // dragEvent hatasını özel olarak yakala
+            if (event.message && event.message.includes('dragEvent is not defined')) {
+                console.warn(`🔧 dragEvent hatası tespit edildi - muhtemelen drag & drop işleminden kaynaklanıyor`);
+                console.warn(`📍 Hata konumu: ${event.filename}:${event.lineno}:${event.colno}`);
+                event.preventDefault();
+                return true;
+            }
+            
+            // Diğer tanımlanmamış değişken hatalarını da yakala
+            if (event.error && event.error.message && event.error.message.includes('is not defined')) {
+                console.warn(`⚠️ Tanımlanmamış değişken hatası: ${event.error.message}`);
+                event.preventDefault();
+                return true;
+            }
+        });
+
+        // Unhandled promise rejection handler
+        window.addEventListener('unhandledrejection', (event) => {
+            console.warn(`⚠️ İşlenmemiş Promise hatası:`, event.reason);
+            event.preventDefault();
+        });
     }
 
     getPlaceholderImage() {
@@ -125,6 +169,10 @@ class SteamLibraryUI {
             case 'library':
                 searchInput.placeholder = this.translate('search_library');
                 searchBtn.textContent = this.translate('search_library');
+                break;
+            case 'denuvo':
+                searchInput.placeholder = this.translate('search_games_or_appid');
+                searchBtn.textContent = this.translate('search');
                 break;
             default:
                 searchInput.placeholder = this.translate('search_placeholder');
@@ -1096,40 +1144,132 @@ class SteamLibraryUI {
             return false;
         }
     }
+    // Token'ı cache'leyen fonksiyon
+    async getCachedToken() {
+        if (this.cachedToken && Date.now() < this.tokenCacheExpiry) {
+            return this.cachedToken;
+        }
+        
+        const token = await this.getStoredToken();
+        if (token) {
+            this.cachedToken = token;
+            this.tokenCacheExpiry = Date.now() + 300000; // 5 dakika cache
+        }
+        return token;
+    }
+
     async getSharedHeader(appId) {
         if (!appId) return this.getPlaceholderImage();
         
-        if (this.imageCache && this.imageCache.has(appId)) {
-            const cached = this.imageCache.get(appId);
-            if (Date.now() - cached.timestamp < this.cacheExpiry) {
-                console.log(`🖼️ Cache'den görsel alındı: ${appId}`);
-                return cached.url;
-            }
+        // 1. Önce AppData cache'den kontrol et
+        const cachedImage = await this.getCachedImageFromAppData(appId);
+        if (cachedImage && cachedImage !== null) {
+            console.log(`✅ Cache'den görsel döndürülüyor: ${appId}`);
+            return cachedImage;
         }
         
+        // 2. AppData'da yoksa API'den çek
         try {
-            console.log(`🌐 API'den görsel alınıyor: ${appId}`);
-            const gameDetails = await fetchSteamAppDetails(appId, 'TR', 'turkish');
-            if (gameDetails && gameDetails.header_image) {
-                if (!this.imageCache) this.imageCache = new Map();
-                this.imageCache.set(appId, {
-                    url: gameDetails.header_image,
-                    timestamp: Date.now()
+            const token = await this.getCachedToken();
+            if (token) {
+                const apiUrl = `https://api.muhammetdag.com/steamlib/game/steam/api.php?appid=${appId}`;
+                
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3000);
+                
+                const response = await fetch(apiUrl, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'User-Agent': 'Paradise-Steam-Library/1.0'
+                    },
+                    signal: controller.signal
                 });
-                console.log(`✅ Görsel cache'e kaydedildi: ${appId}`);
+                
+                clearTimeout(timeoutId);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success && data.results && data.results[appId]) {
+                        const gameData = data.results[appId];
+                        if (gameData.success && gameData.header_image) {
+                            // AppData'ya kaydet
+                            await this.saveImageToAppData(appId, gameData.header_image);
+                            return gameData.header_image;
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            // Sessizce devam et
+        }
+        
+        // 3. API başarısız ise Steam Store'dan çek
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2000);
+            
+            const gameDetails = await fetchSteamAppDetails(appId, 'TR', 'turkish', controller.signal);
+            clearTimeout(timeoutId);
+            
+            if (gameDetails && gameDetails.header_image) {
+                // AppData'ya kaydet
+                await this.saveImageToAppData(appId, gameDetails.header_image);
                 return gameDetails.header_image;
             }
         } catch (error) {
-            console.log(`❌ API'den görsel alınamadı (${appId}), fallback kullanılıyor:`, error);
+            // Sessizce devam et
         }
         
+        // 4. Son çare: Steam CDN'den direkt al
         const fallbackUrl = `https://cdn.steamstatic.com/steam/apps/${appId}/header.jpg`;
-        if (!this.imageCache) this.imageCache = new Map();
-        this.imageCache.set(appId, {
-            url: fallbackUrl,
-            timestamp: Date.now()
-        });
+        // AppData'ya kaydet
+        await this.saveImageToAppData(appId, fallbackUrl);
+        return fallbackUrl;
+    }
+
+    async getSharedHeaderParallel(appId) {
+        if (!appId) return this.getPlaceholderImage();
         
+        // AppData cache'den kontrol et
+        const cachedImage = await this.getCachedImageFromAppData(appId);
+        if (cachedImage && cachedImage !== null) {
+            console.log(`✅ Cache'den görsel döndürülüyor (parallel): ${appId}`);
+            return cachedImage;
+        }
+        
+        // AppData'da yoksa API'den çek
+        try {
+            const token = await this.getCachedToken();
+            if (token) {
+                const apiUrl = `https://api.muhammetdag.com/steamlib/game/steam/api.php?appid=${appId}`;
+                const response = await fetch(apiUrl, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'User-Agent': 'Paradise-Steam-Library/1.0'
+                    },
+                    timeout: 5000
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success && data.results && data.results[appId]) {
+                        const gameData = data.results[appId];
+                        if (gameData.success && gameData.header_image) {
+                            // AppData'ya kaydet
+                            await this.saveImageToAppData(appId, gameData.header_image);
+                            return gameData.header_image;
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            // Sessizce devam et
+        }
+        
+        // Fallback: Steam CDN'den direkt al
+        const fallbackUrl = `https://cdn.steamstatic.com/steam/apps/${appId}/header.jpg`;
+        // AppData'ya kaydet
+        await this.saveImageToAppData(appId, fallbackUrl);
         return fallbackUrl;
     }
 
@@ -1228,16 +1368,83 @@ class SteamLibraryUI {
         };
     }
 
+    saveImageCacheAsync() {
+        // Cache'i asenkron olarak kaydet (UI'yi bloklamaz)
+        setTimeout(() => {
+            try {
+                if (this.config && this.imageCache) {
+                    const cacheObject = Object.fromEntries(this.imageCache);
+                    this.config.imageCache = cacheObject;
+                    this.updateConfig({ imageCache: cacheObject });
+                }
+            } catch (error) {
+                console.log('Cache kaydetme hatası:', error);
+            }
+        }, 100); // 100ms gecikme ile kaydet
+    }
+
+    // AppData'da görsel cache sistemi
+    async getCachedImageFromAppData(appId) {
+        try {
+            console.log(`🔍 AppData cache kontrol ediliyor: ${appId}`);
+            const cacheData = await ipcRenderer.invoke('get-cached-image', appId);
+            
+            if (cacheData && cacheData.success && cacheData.url) {
+                const now = Date.now();
+                const oneHourInMs = 60 * 60 * 1000; // 1 saat
+                
+                if (now - cacheData.timestamp < oneHourInMs) {
+                    console.log(`✅ AppData cache'den görsel bulundu: ${appId} (${Math.round((now - cacheData.timestamp) / 1000 / 60)} dk önce)`);
+                    return cacheData.url;
+                } else {
+                    // Eski cache'i temizle
+                    await ipcRenderer.invoke('remove-cached-image', appId);
+                    console.log(`🗑️ Eski AppData cache temizlendi: ${appId} (${Math.round((now - cacheData.timestamp) / 1000 / 60)} dk önce)`);
+                }
+            } else {
+                console.log(`❌ AppData cache'de görsel bulunamadı: ${appId}`);
+            }
+        } catch (error) {
+            console.log(`❌ AppData cache okuma hatası (${appId}):`, error);
+            // JSON parse hatası durumunda cache'i temizle
+            if (error.message && error.message.includes('JSON')) {
+                console.log(`🗑️ JSON hatası nedeniyle cache temizleniyor: ${appId}`);
+                try {
+                    await ipcRenderer.invoke('remove-cached-image', appId);
+                } catch (cleanupError) {
+                    console.log(`❌ Cache temizleme hatası:`, cleanupError);
+                }
+            }
+        }
+        return null;
+    }
+
+    async saveImageToAppData(appId, imageUrl) {
+        try {
+            await ipcRenderer.invoke('save-cached-image', {
+                appId: appId,
+                url: imageUrl,
+                timestamp: Date.now()
+            });
+            console.log(`💾 Görsel AppData'ya kaydedildi: ${appId}`);
+        } catch (error) {
+            console.log(`❌ AppData cache kaydetme hatası (${appId}):`, error);
+        }
+    }
+
     async init() {
         console.log('=== init() called ===');
         
         this.imageCache = new Map();
-        this.cacheExpiry = 24 * 60 * 60 * 1000; // 24 saat cache süresi
+        this.cacheExpiry = 2 * 60 * 60 * 1000; // 2 saat cache süresi (daha hızlı güncelleme)
         
         if (this.config?.imageCache) {
             try {
                 this.imageCache = new Map(Object.entries(this.config.imageCache));
                 console.log(`📦 ${this.imageCache.size} görsel cache'den yüklendi`);
+                
+                // Cache'i temizle ve sadece geçerli olanları tut
+                this.clearImageCache(false);
             } catch (error) {
                 console.log('Cache yüklenirken hata, yeni cache başlatılıyor:', error);
                 this.imageCache = new Map();
@@ -1614,6 +1821,17 @@ class SteamLibraryUI {
             this.refreshLibrary();
         });
 
+        const batchUpdateBtn = document.getElementById('batchUpdateBtn');
+        if (batchUpdateBtn) {
+            console.log('Batch update butonu bulundu, event listener ekleniyor');
+            batchUpdateBtn.addEventListener('click', () => {
+                console.log('Batch update butonuna tıklandı');
+                this.batchUpdateAllGames();
+            });
+        } else {
+            console.error('Batch update butonu bulunamadı!');
+        }
+
         const logoutBtn = document.getElementById('logoutBtn');
         if (logoutBtn) {
             logoutBtn.addEventListener('click', () => {
@@ -1668,6 +1886,10 @@ class SteamLibraryUI {
         });
         document.getElementById('bubbleSettings').addEventListener('click', () => {
             this.switchPage('settings');
+            bubbleMenu.classList.remove('active');
+        });
+        document.getElementById('bubbleDenuvo').addEventListener('click', () => {
+            this.switchPage('denuvo');
             bubbleMenu.classList.remove('active');
         });
         document.getElementById('bubbleHome').addEventListener('click', () => {
@@ -2285,6 +2507,9 @@ class SteamLibraryUI {
             } else if (page === 'library') {
                 console.log('🔄 Kütüphane sayfası açıldı, yenileniyor...');
                 this.loadLibrary();
+            } else if (page === 'denuvo') {
+                console.log('🔄 Denuvo aktivasyon sayfası açıldı, oyunlar yükleniyor...');
+                this.loadDenuvoGames();
             } else if (page === 'home') {
                 console.log('🔄 Ana sayfa açıldı, oyunlar yükleniyor...');
                 this.loadGames();
@@ -2337,8 +2562,23 @@ class SteamLibraryUI {
                             .trim();
                     }
                     
+                    // .acf'den alınan name'deki ':' karakterlerini ';' ile değiştir
+                    if (gameName && gameName.includes(':')) {
+                        gameName = gameName.replace(/:/g, ';');
+                        console.log(`🔄 Name karakteri değiştirildi: ${item.gameName} -> ${gameName}`);
+                    }
+                    
+                    // '&' karakterini 'and' ile değiştir (sadece düz &, %26 değil)
+                    if (gameName && gameName.includes('&') && !gameName.includes('%26')) {
+                        gameName = gameName.replace(/&/g, 'and');
+                        console.log(`🔄 & karakteri 'and' ile değiştirildi: ${item.gameName} -> ${gameName}`);
+                    }
+                    
                     gameNames.push(gameName);
-                    gameItems.push({ ...item, gameName });
+                    gameItems.push({ 
+                        ...item, 
+                        gameName
+                    });
                 } catch (error) {
                     console.error(`❌ Oyun hazırlama hatası:`, error);
                 }
@@ -2532,6 +2772,15 @@ class SteamLibraryUI {
             
             console.log(`🚀 ${gameNames.length} oyun için paralel fix kontrolü başlatılıyor...`);
             const fixResults = await ipcRenderer.invoke('check-multiple-repair-fix', gameNames);
+            
+            // False dönen oyunlar için alternatif name'leri dene
+            const failedGames = [];
+            for (let i = 0; i < gameItems.length; i++) {
+                const item = gameItems[i];
+                const gameName = gameNames[i];
+                const hasFix = fixResults[gameName];
+                
+            }
                     
             grid.innerHTML = '';
             let fixCount = 0;
@@ -3292,16 +3541,45 @@ class SteamLibraryUI {
     async handleInstallRepairFix({ folderName, gameName, appid, fullPath, card }) {
         try {
             this.showLoading(this.translate('downloading'));
-            const listHtml = await ipcRenderer.invoke('list-repair-fix-files', gameName || folderName);
-            const rarFiles = (listHtml || '').match(/href="([^"]+\.rar)"/gi)?.map(m => m.replace(/href="|"/g, '')) || [];
-            if (rarFiles.length === 0) {
+            console.log(`🔍 Online fix dosyaları aranıyor: ${gameName || folderName}`);
+            
+            const response = await ipcRenderer.invoke('list-repair-fix-files', gameName || folderName);
+            console.log('📡 API yanıtı alındı:', response);
+            console.log('📡 API yanıtı tipi:', typeof response);
+            console.log('📡 API yanıtı keys:', Object.keys(response || {}));
+            
+            // API yanıtı { "files": "HTML içeriği" } formatında geliyor
+            const listHtml = response && response.files ? response.files : response;
+            console.log('📄 HTML içeriği:', listHtml);
+            console.log('📄 HTML uzunluğu:', listHtml ? listHtml.length : 0);
+            
+            const fileInfo = this.parseFileListHtml(listHtml);
+            console.log('📁 Parse edilen dosyalar:', fileInfo);
+            
+            if (fileInfo.length === 0) {
+                console.log('❌ Hiç dosya bulunamadı');
                 this.showNotification('error', this.translate('no_files_found'), 'error');
                 return;
             }
-            let selectedFile = rarFiles[0];
-            if (rarFiles.length > 1) {
-                selectedFile = await this.promptSelectRepairFile(rarFiles);
-                if (!selectedFile) return;
+            
+            let selectedFile = fileInfo[0].name;
+            if (fileInfo.length > 1) {
+                console.log(`🎯 ${fileInfo.length} dosya bulundu, seçim modal'ı açılıyor`);
+                // Loading ekranını kapat
+                this.hideLoading();
+                
+                const selectedFileInfo = await this.promptSelectRepairFile(fileInfo);
+                if (!selectedFileInfo) {
+                    console.log('❌ Kullanıcı seçim yapmadı');
+                    return;
+                }
+                selectedFile = selectedFileInfo.name;
+                console.log(`✅ Seçilen dosya: ${selectedFile}`);
+                
+                // Tekrar loading ekranını aç
+                this.showLoading(this.translate('downloading'));
+            } else {
+                console.log(`✅ Tek dosya bulundu, otomatik seçildi: ${selectedFile}`);
             }
             await ipcRenderer.invoke('download-and-install-repair-fix', {
                 folderName: gameName || folderName,  // gameName kullan, yoksa folderName
@@ -3373,32 +3651,429 @@ class SteamLibraryUI {
         }
     }
 
-    async promptSelectRepairFile(files) {
+    parseFileListHtml(html) {
+        if (!html) {
+            console.log('❌ HTML içeriği boş!');
+            return [];
+        }
+        
+        console.log('🔍 HTML içeriği parse ediliyor...');
+        console.log('🔍 HTML uzunluğu:', html.length);
+        console.log('🔍 HTML ilk 500 karakter:', html.substring(0, 500));
+        
+        // HTML'den dosya bilgilerini parse et
+        // Format: <a href="dosya.rar">dosya.rar</a> 05-Apr-2024 10:30 6M
+        const fileRegex = /<a href="([^"]+\.rar)">([^<]+)<\/a>\s+(\d{2}-\w{3}-\d{4})\s+(\d{2}:\d{2})\s+([0-9.]+[KM]?)/gi;
+        
+        // Alternatif regex - daha esnek
+        const altFileRegex = /<a href="([^"]+\.rar)">([^<]+)<\/a>\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)/gi;
+        const files = [];
+        let match;
+        
+        console.log('🔍 Regex 1 deneniyor...');
+        
+        // İlk regex'i dene
+        while ((match = fileRegex.exec(html)) !== null) {
+            const [, href, name, date, time, size] = match;
+            console.log(`📁 Dosya bulundu (regex 1): ${name} (${size}) - ${date} ${time}`);
+            files.push({
+                name: name.trim(),
+                href: href,
+                date: date,
+                time: time,
+                size: size,
+                fullDate: `${date} ${time}`
+            });
+        }
+        
+        // Eğer hiç dosya bulunamadıysa alternatif regex'i dene
+        if (files.length === 0) {
+            console.log('🔄 Alternatif regex deneniyor...');
+            while ((match = altFileRegex.exec(html)) !== null) {
+                const [, href, name, date, time, size] = match;
+                console.log(`📁 Dosya bulundu (regex 2): ${name} (${size}) - ${date} ${time}`);
+                files.push({
+                    name: name.trim(),
+                    href: href,
+                    date: date,
+                    time: time,
+                    size: size,
+                    fullDate: `${date} ${time}`
+                });
+            }
+        }
+        
+        // Eğer hala hiç dosya bulunamadıysa, sadece .rar linklerini bul
+        if (files.length === 0) {
+            console.log('🔄 Sadece .rar linkleri aranıyor...');
+            const simpleRegex = /<a href="([^"]+\.rar)">([^<]+)<\/a>/gi;
+            while ((match = simpleRegex.exec(html)) !== null) {
+                const [, href, name] = match;
+                console.log(`📁 Dosya bulundu (basit): ${name}`);
+                files.push({
+                    name: name.trim(),
+                    href: href,
+                    date: 'Bilinmiyor',
+                    time: 'Bilinmiyor',
+                    size: 'Bilinmiyor',
+                    fullDate: 'Bilinmiyor'
+                });
+            }
+        }
+        
+        // Eğer hala hiç dosya bulunamadıysa, tüm linkleri bul
+        if (files.length === 0) {
+            console.log('🔄 Tüm linkler aranıyor...');
+            const allLinksRegex = /<a href="([^"]+)">([^<]+)<\/a>/gi;
+            while ((match = allLinksRegex.exec(html)) !== null) {
+                const [, href, name] = match;
+                if (href.includes('.rar') || name.includes('.rar')) {
+                    console.log(`📁 Dosya bulundu (tüm linkler): ${name} -> ${href}`);
+                    files.push({
+                        name: name.trim(),
+                        href: href,
+                        date: 'Bilinmiyor',
+                        time: 'Bilinmiyor',
+                        size: 'Bilinmiyor',
+                        fullDate: 'Bilinmiyor'
+                    });
+                }
+            }
+        }
+        
+        console.log(`✅ Toplam ${files.length} dosya parse edildi:`, files);
+        return files;
+    }
+
+    async promptSelectRepairFile(fileInfo) {
+        console.log('🎨 Dosya seçim modal\'ı oluşturuluyor...', fileInfo);
+        
         return new Promise(resolve => {
+            const currentTheme = this.getCurrentTheme();
+            const themeColors = this.getThemeColors(currentTheme);
+            
+            console.log('🎨 Tema renkleri:', themeColors);
+            console.log('🎨 Mevcut tema:', currentTheme);
+            console.log('🎨 Modal arka plan:', themeColors.modalBg || themeColors.background);
+            console.log('🎨 Kart arka plan:', themeColors.cardBg || themeColors.background);
+            console.log('🎨 Vurgu rengi:', themeColors.accent);
+            console.log('🎨 Buton rengi:', themeColors.buttonBg);
+            
             const modal = document.createElement('div');
             modal.className = 'modal-overlay active';
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: ${themeColors.modalOverlay || 'rgba(0, 0, 0, 0.8)'};
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10000;
+                backdrop-filter: blur(10px);
+            `;
+            
             modal.innerHTML = `
-                <div class="modal-container small">
-                    <div class="modal-header"><h2>${this.translate('select_file_to_download')}</h2><button class="modal-close" id="rfClose">×</button></div>
-                    <div class="modal-content">
-                        <div class="dlc-list" id="rfList"></div>
-                        <div class="modal-actions">
-                            <button class="action-btn secondary" id="rfCancel">${this.translate('cancel')}</button>
+                <div class="modal-container file-selection-modal" style="
+                    max-width: 600px;
+                    width: 90%;
+                    max-height: 80vh;
+                    background: ${themeColors.modalBg || themeColors.background || 'linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.95) 100%)'};
+                    border: 1px solid ${themeColors.border || 'rgba(148, 163, 184, 0.3)'};
+                    border-radius: 20px;
+                    backdrop-filter: blur(20px);
+                    box-shadow: 0 25px 50px -12px ${themeColors.shadow || 'rgba(0, 0, 0, 0.7)'};
+                    overflow: hidden;
+                    position: relative;
+                ">
+                    <div class="modal-header" style="
+                        padding: 24px 24px 0 24px;
+                        border-bottom: 1px solid ${themeColors.border || 'rgba(148, 163, 184, 0.1)'};
+                        margin-bottom: 20px;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                    ">
+                        <h2 style="
+                            color: ${themeColors.textPrimary || '#ffffff'};
+                            font-size: 24px;
+                            font-weight: 700;
+                            margin: 0;
+                            display: flex;
+                            align-items: center;
+                            gap: 12px;
+                        ">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="7,10 12,15 17,10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                            ${this.translate('select_file_to_download')}
+                        </h2>
+                    </div>
+                    <div class="modal-content" style="padding: 0 24px 24px 24px; max-height: 60vh; overflow-y: auto;">
+                        <p style="
+                            color: ${themeColors.textSecondary || 'rgba(255, 255, 255, 0.8)'};
+                            margin: 0 0 20px 0;
+                            font-size: 16px;
+                        ">${this.translate('select_file_description') || 'İndirmek istediğiniz dosyayı seçin:'}</p>
+                        <div class="file-list" id="rfList" style="
+                            display: flex;
+                            flex-direction: column;
+                            gap: 12px;
+                            margin-bottom: 24px;
+                        "></div>
+                        <div class="modal-actions" style="
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            gap: 12px;
+                            padding-top: 16px;
+                            border-top: 1px solid ${themeColors.border || 'rgba(148, 163, 184, 0.1)'};
+                        ">
+                            <div style="
+                                color: ${themeColors.textSecondary || 'rgba(255, 255, 255, 0.6)'};
+                                font-size: 14px;
+                            " id="selectedFileInfo">Hiçbir dosya seçilmedi</div>
+                            <div style="display: flex; gap: 12px;">
+                                <button class="action-btn secondary" id="rfCancel" style="
+                                    background: ${themeColors.background || 'rgba(148, 163, 184, 0.1)'};
+                                    color: ${themeColors.textSecondary || 'rgba(255, 255, 255, 0.8)'};
+                                    border: 1px solid ${themeColors.border || 'rgba(148, 163, 184, 0.2)'};
+                                    padding: 12px 24px;
+                                    border-radius: 8px;
+                                    font-weight: 500;
+                                    cursor: pointer;
+                                    transition: all 0.2s ease;
+                                ">${this.translate('cancel')}</button>
+                                <button class="action-btn primary" id="rfDownload" style="
+                                    background: ${themeColors.buttonBg || `linear-gradient(135deg, ${themeColors.accent || '#3b82f6'}, ${themeColors.accentShadow || '#1d4ed8'})`};
+                                    color: ${themeColors.buttonText || 'white'};
+                                    border: none;
+                                    padding: 12px 24px;
+                                    border-radius: 8px;
+                                    font-weight: 600;
+                                    cursor: pointer;
+                                    transition: all 0.2s ease;
+                                    opacity: 0.5;
+                                    pointer-events: none;
+                                ">${this.translate('download') || 'İndir'}</button>
+                            </div>
                         </div>
                     </div>
                 </div>`;
+            
             document.body.appendChild(modal);
+            console.log('🎨 Modal DOM\'a eklendi');
+            
             const list = modal.querySelector('#rfList');
-            files.forEach(f => {
-                const btn = document.createElement('button');
-                btn.className = 'action-btn primary';
-                btn.textContent = f;
-                btn.onclick = () => { cleanup(); resolve(f); };
-                list.appendChild(btn);
+            console.log('🎨 Liste elementi bulundu:', list);
+            
+            fileInfo.forEach((file, index) => {
+                console.log(`🎨 Dosya ${index + 1} işleniyor:`, file);
+                const fileItem = document.createElement('div');
+                fileItem.className = 'file-item';
+                fileItem.style.cssText = `
+                    background: ${themeColors.cardBg || themeColors.background || 'linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(51, 65, 85, 0.8) 100%)'};
+                    border: 2px solid ${themeColors.border || 'rgba(148, 163, 184, 0.2)'};
+                    border-radius: 16px;
+                    padding: 24px;
+                    cursor: pointer;
+                    transition: all 0.3s ease;
+                    position: relative;
+                    overflow: hidden;
+                    backdrop-filter: blur(10px);
+                    box-shadow: 0 4px 15px ${themeColors.shadow || 'rgba(0, 0, 0, 0.1)'};
+                `;
+                
+                fileItem.innerHTML = `
+                    <div style="
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        position: relative;
+                    ">
+                        <div style="
+                            display: flex;
+                            align-items: center;
+                            gap: 16px;
+                            flex: 1;
+                        ">
+                            <div style="
+                                width: 48px;
+                                height: 48px;
+                                background: ${themeColors.iconGradient || `linear-gradient(135deg, ${themeColors.accent || '#3b82f6'}, ${themeColors.accentShadow || '#1d4ed8'})`};
+                                border-radius: 12px;
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                color: white;
+                                font-weight: 700;
+                                font-size: 16px;
+                                box-shadow: 0 4px 15px ${themeColors.accentShadow || 'rgba(59, 130, 246, 0.3)'};
+                            ">RAR</div>
+                            <div style="flex: 1;">
+                                <h3 style="
+                                    color: ${themeColors.textPrimary || '#ffffff'};
+                                    font-size: 18px;
+                                    font-weight: 600;
+                                    margin: 0 0 8px 0;
+                                    line-height: 1.4;
+                                    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+                                ">${file.name}</h3>
+                                <div style="
+                                    display: flex;
+                                    align-items: center;
+                                    gap: 20px;
+                                    color: ${themeColors.textSecondary || 'rgba(255, 255, 255, 0.7)'};
+                                    font-size: 14px;
+                                    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+                                ">
+                                    <span style="display: flex; align-items: center; gap: 4px;">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                                            <line x1="16" y1="2" x2="16" y2="6"/>
+                                            <line x1="8" y1="2" x2="8" y2="6"/>
+                                            <line x1="3" y1="10" x2="21" y2="10"/>
+                                        </svg>
+                                        ${file.fullDate}
+                                    </span>
+                                    <span style="display: flex; align-items: center; gap: 4px;">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                                            <polyline points="3.27,6.96 12,12.01 20.73,6.96"/>
+                                            <line x1="12" y1="22.08" x2="12" y2="12"/>
+                                        </svg>
+                                        ${file.size}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                fileItem.addEventListener('mouseenter', () => {
+                    if (!fileItem.classList.contains('selected')) {
+                        fileItem.style.borderColor = themeColors.accent || '#3b82f6';
+                        fileItem.style.transform = 'translateY(-4px)';
+                        fileItem.style.boxShadow = `0 12px 30px ${themeColors.accentShadow || 'rgba(59, 130, 246, 0.4)'}`;
+                    }
+                });
+                
+                fileItem.addEventListener('mouseleave', () => {
+                    if (!fileItem.classList.contains('selected')) {
+                        fileItem.style.borderColor = themeColors.border || 'rgba(148, 163, 184, 0.2)';
+                        fileItem.style.transform = 'translateY(0)';
+                        fileItem.style.boxShadow = `0 4px 15px ${themeColors.shadow || 'rgba(0, 0, 0, 0.1)'}`;
+                    }
+                });
+                
+                fileItem.addEventListener('click', () => {
+                    console.log('🎯 Dosya seçildi:', file);
+                    console.log('🎯 Dosya ismi:', file.name);
+                    console.log('🎯 Dosya boyutu:', file.size);
+                    
+                    // Önceki seçimleri temizle
+                    list.querySelectorAll('.file-item').forEach(item => {
+                        item.classList.remove('selected');
+                        // Sadece border, transform ve shadow değişir, arka plan değişmez
+                        item.style.borderColor = themeColors.border || 'rgba(148, 163, 184, 0.2)';
+                        item.style.borderWidth = '2px';
+                        item.style.transform = 'translateY(0)';
+                        item.style.boxShadow = `0 4px 15px ${themeColors.shadow || 'rgba(0, 0, 0, 0.1)'}`;
+                        // Arka plan rengi değişmez - orijinal tema rengi korunur
+                        item.style.background = themeColors.cardBg || themeColors.background || 'linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(51, 65, 85, 0.8) 100%)';
+                    });
+                    
+                    // Yeni seçimi işaretle
+                    fileItem.classList.add('selected');
+                    
+                    // Seçim animasyonu - sadece border belirgin olsun
+                    fileItem.style.borderColor = themeColors.accent || '#3b82f6';
+                    fileItem.style.borderWidth = '3px';
+                    fileItem.style.transform = 'translateY(-2px)';
+                    fileItem.style.boxShadow = `0 8px 25px ${themeColors.accentShadow || 'rgba(59, 130, 246, 0.3)'}`;
+                    // Arka plan rengi değişmez - orijinal tema rengi korunur
+                    fileItem.style.background = themeColors.cardBg || themeColors.background || 'linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(51, 65, 85, 0.8) 100%)';
+                    
+                    // Tüm iç elementlerin arka planını da tema renginde tut
+                    const innerElements = fileItem.querySelectorAll('div, h3, span');
+                    innerElements.forEach(el => {
+                        if (el.style.background !== 'transparent' && !el.style.background.includes('gradient')) {
+                            el.style.background = 'transparent';
+                        }
+                    });
+                    
+                    // Seçilen dosya bilgisini güncelle
+                    const selectedFileInfo = modal.querySelector('#selectedFileInfo');
+                    if (selectedFileInfo) {
+                        selectedFileInfo.textContent = `Seçilen: ${file.name} (${file.size})`;
+                        selectedFileInfo.style.color = themeColors.accent || '#3b82f6';
+                    }
+                    
+                    // İndir butonunu aktif et
+                    const downloadBtn = modal.querySelector('#rfDownload');
+                    if (downloadBtn) {
+                        downloadBtn.style.opacity = '1';
+                        downloadBtn.style.pointerEvents = 'auto';
+                    }
+                });
+                
+                list.appendChild(fileItem);
             });
-            const cleanup = () => { modal.remove(); };
-            modal.querySelector('#rfCancel').onclick = () => { cleanup(); resolve(null); };
-            modal.querySelector('#rfClose').onclick = () => { cleanup(); resolve(null); };
+            
+            const cleanup = () => { 
+                console.log('🎯 Modal temizleniyor...');
+                modal.remove(); 
+            };
+            
+            const cancelBtn = modal.querySelector('#rfCancel');
+            const downloadBtn = modal.querySelector('#rfDownload');
+            
+            console.log('🎯 Cancel butonu:', cancelBtn);
+            console.log('🎯 Download butonu:', downloadBtn);
+            
+            let selectedFile = null;
+            
+            if (cancelBtn) {
+                cancelBtn.onclick = () => { 
+                    console.log('🎯 İptal butonuna tıklandı');
+                    cleanup(); 
+                    resolve(null); 
+                };
+            }
+            
+            if (downloadBtn) {
+                downloadBtn.onclick = () => { 
+                    const selectedItem = modal.querySelector('.file-item.selected');
+                    if (selectedItem) {
+                        const fileIndex = Array.from(list.children).indexOf(selectedItem);
+                        selectedFile = fileInfo[fileIndex];
+                        console.log('🎯 İndir butonuna tıklandı, seçilen dosya:', selectedFile);
+                        cleanup(); 
+                        resolve(selectedFile);
+                    } else {
+                        console.log('🎯 Hiçbir dosya seçilmedi');
+                    }
+                };
+                
+                // Hover efekti
+                downloadBtn.addEventListener('mouseenter', () => {
+                    if (downloadBtn.style.opacity === '1') {
+                        downloadBtn.style.background = themeColors.buttonHover || themeColors.accent;
+                        downloadBtn.style.transform = 'translateY(-2px)';
+                    }
+                });
+                
+                downloadBtn.addEventListener('mouseleave', () => {
+                    if (downloadBtn.style.opacity === '1') {
+                        downloadBtn.style.background = themeColors.buttonBg || `linear-gradient(135deg, ${themeColors.accent || '#3b82f6'}, ${themeColors.accentShadow || '#1d4ed8'})`;
+                        downloadBtn.style.transform = 'translateY(0)';
+                    }
+                });
+            }
         });
     }
 
@@ -3696,7 +4371,7 @@ class SteamLibraryUI {
         }
     }
 
-    async renderGames() {
+        async renderGames() {
         const gamesGrid = document.getElementById('gamesGrid');
         if (!gamesGrid) return;
 
@@ -3717,6 +4392,17 @@ class SteamLibraryUI {
             return;
         }
 
+        // Önce tüm oyunların resimlerini paralel olarak al
+        const appIds = this.gamesData.map(game => game.appid);
+        console.log(`🖼️ Ana sayfa için ${appIds.length} oyun resmi paralel olarak alınıyor...`);
+        
+        try {
+            await this.getParallelGameImages(appIds);
+            console.log('✅ Ana sayfa resimleri paralel olarak alındı');
+        } catch (error) {
+            console.log('⚠️ Paralel resim alma başarısız, normal moda geçiliyor:', error);
+        }
+
         const fragment = document.createDocumentFragment();
         
         for (const game of this.gamesData) {
@@ -3727,7 +4413,7 @@ class SteamLibraryUI {
                 console.error('Game card creation failed:', error);
             }
         }
-        
+
         gamesGrid.replaceChildren(fragment);
     }
 
@@ -3758,6 +4444,7 @@ class SteamLibraryUI {
         if (isInLibrary) {
             actionsHtml = `
                 <button class="game-btn primary" data-i18n="start_game" onclick="event.stopPropagation(); ui.launchGame(${game.appid})">${this.translate('start_game')}</button>
+                <button class="game-btn update" data-i18n="update_game" onclick="event.stopPropagation(); ui.updateGameInfo(${game.appid})">${this.translate('update_game')}</button>
                 <button class="game-btn secondary" data-i18n="remove_game" onclick="event.stopPropagation(); ui.deleteGame(${game.appid})">${this.translate('remove_game')}</button>
             `;
         } else {
@@ -4507,7 +5194,13 @@ class SteamLibraryUI {
         } catch (error) {
             console.error('Oyun ekleme hatası:', error);
             
-            this.showNotification('error', this.translate('game_not_found'), 'error');
+            if (error.message && error.message.includes('API_TIMEOUT_ERROR')) {
+                this.showNotification('error', 'Sunucu yanıt vermiyor. Lütfen daha sonra tekrar deneyin.', 'error');
+            } else if (error.message && error.message.includes('GAME_NOT_FOUND')) {
+                this.showNotification('error', this.translate('game_not_found'), 'error');
+            } else {
+                this.showNotification('error', this.translate('game_add_failed'), 'error');
+            }
         } finally {
             this.hideLoading();
         }
@@ -4631,6 +5324,7 @@ class SteamLibraryUI {
             if (confirmBtn) {
                 confirmBtn.onclick = () => {
                     this.confirmGameWithDLCs(gameDetails.appid, Array.from(selectedDLCs));
+                    this.closeModal('dlcModal');
                 };
             }
             if (cancelBtn) {
@@ -4699,6 +5393,106 @@ class SteamLibraryUI {
         }
     }
 
+    async batchUpdateAllGames() {
+        console.log('batchUpdateAllGames çağrıldı');
+        console.log('libraryGames:', this.libraryGames);
+        
+        if (!this.libraryGames || this.libraryGames.length === 0) {
+            console.log('Kütüphanede oyun yok');
+            this.showNotification('warning', this.translate('no_games_to_update'), 'warning');
+            return;
+        }
+
+        console.log('Modal gösteriliyor...');
+        // Modal'ı göster
+        this.showBatchUpdateModal();
+    }
+
+    showBatchUpdateModal() {
+        console.log('showBatchUpdateModal çağrıldı');
+        const modal = document.getElementById('batchUpdateModal');
+        const gameCount = document.getElementById('batchUpdateGameCount');
+        const cancelBtn = document.getElementById('batchUpdateCancelBtn');
+        const confirmBtn = document.getElementById('batchUpdateConfirmBtn');
+
+        console.log('Modal elementleri:', { modal, gameCount, cancelBtn, confirmBtn });
+
+        if (!modal || !gameCount || !cancelBtn || !confirmBtn) {
+            console.error('Batch update modal elementleri bulunamadı');
+            return;
+        }
+
+        // Oyun sayısını güncelle
+        gameCount.textContent = this.libraryGames.length;
+
+        // Event listener'ları temizle
+        cancelBtn.onclick = null;
+        confirmBtn.onclick = null;
+
+        // İptal butonu
+        cancelBtn.onclick = () => {
+            this.hideBatchUpdateModal();
+        };
+
+        // Onay butonu
+        confirmBtn.onclick = async () => {
+            this.hideBatchUpdateModal();
+            await this.executeBatchUpdate();
+        };
+
+        // Backdrop click ile kapanma
+        modal.onclick = (e) => {
+            if (e.target === modal) {
+                this.hideBatchUpdateModal();
+            }
+        };
+
+        // Modal'ı göster
+        console.log('Modal gösteriliyor...');
+        modal.style.display = 'flex';
+        modal.style.visibility = 'visible';
+        modal.style.opacity = '1';
+        modal.classList.add('show');
+        console.log('Modal gösterildi - display:', modal.style.display, 'opacity:', modal.style.opacity, 'class:', modal.className);
+    }
+
+    hideBatchUpdateModal() {
+        const modal = document.getElementById('batchUpdateModal');
+        if (modal) {
+            modal.style.opacity = '0';
+            modal.style.visibility = 'hidden';
+            modal.classList.remove('show');
+            setTimeout(() => {
+                modal.style.display = 'none';
+            }, 300);
+        }
+    }
+
+    async executeBatchUpdate() {
+        const batchBtn = document.getElementById('batchUpdateBtn');
+        if (batchBtn) {
+            batchBtn.classList.add('loading');
+            batchBtn.disabled = true;
+        }
+
+        try {
+            // Tüm oyunların appId'lerini al
+            const appIds = this.libraryGames.map(game => game.appid);
+            
+            // Toplu güncelleme fonksiyonunu çağır
+            await this.updateMultipleGameInfo(appIds);
+            
+        } catch (error) {
+            console.error('Toplu güncelleme hatası:', error);
+            this.showNotification('error', this.translate('batch_update_failed'), 'error');
+        } finally {
+            if (batchBtn) {
+                batchBtn.classList.remove('loading');
+                batchBtn.disabled = false;
+            }
+        }
+    }
+
     async refreshLibrary() {
         const refreshBtn = document.getElementById('refreshLibraryBtn');
         if (refreshBtn) {
@@ -4740,6 +5534,18 @@ class SteamLibraryUI {
             return;
         }
 
+        // Önce tüm oyunların resimlerini paralel olarak al
+        const appIds = this.libraryGames.map(game => game.appid);
+        console.log(`🖼️ Kütüphane için ${appIds.length} oyun resmi paralel olarak alınıyor...`);
+        
+        try {
+            await this.getParallelGameImages(appIds);
+            console.log('✅ Kütüphane resimleri paralel olarak alındı');
+        } catch (error) {
+            console.log('⚠️ Paralel resim alma başarısız, normal moda geçiliyor:', error);
+        }
+
+        // Sonra oyun kartlarını oluştur (resimler artık cache'de)
         const gameCardPromises = this.libraryGames.map(game => this.createGameCard(game, true));
         const gameCards = await Promise.all(gameCardPromises);
         
@@ -6905,8 +7711,142 @@ class SteamLibraryUI {
         this.showNotification('success', this.translate('launching_game'), 'success');
     }
 
+    async updateGameInfo(appId) {
+        console.log(`Oyun bilgileri güncelleniyor: ${appId}`);
+        this.showLoading(this.translate('game_updating'));
+        
+        try {
+            const result = await ipcRenderer.invoke('update-game-info', appId);
+            this.hideLoading();
+            
+                                    if (result.success) {
+                            console.log('Oyun bilgileri başarıyla güncellendi:', result.data);
+                            
+                            // Lua güncelleme durumunu kontrol et
+                            if (result.data.luaUpdated && result.data.luaUpdateCount > 0) {
+                                this.showNotification('success', `${this.translate('game_updated_success')} ${result.data.luaUpdateCount} ${this.translate('manifest_updated')}`, 'success');
+                            } else if (result.data.luaUpdated && result.data.luaUpdateCount === 0 && result.data.alreadyUpToDateCount > 0) {
+                                this.showNotification('info', `${this.translate('all_games_up_to_date')} ${result.data.alreadyUpToDateCount} ${this.translate('manifest_already_up_to_date')}`, 'info');
+                            } else if (result.data.luaUpdated && result.data.luaUpdateCount === 0) {
+                                this.showNotification('info', `${this.translate('game_updated_success')} güncellenecek manifest bulunamadı`, 'info');
+                            } else {
+                                this.showNotification('warning', `${this.translate('game_updated_success')} Lua dosyası güncellenemedi`, 'warning');
+                            }
+                        } else {
+                console.error('Oyun bilgileri güncellenirken hata:', result.error);
+                
+                // SteamCMD bulunamadı hatası için özel mesaj
+                if (result.error && result.error.includes('SteamCMD bulunamadı')) {
+                    this.showNotification('error', 'SteamCMD bulunamadı. SteamCMD\'yi indirmeniz gerekiyor.', 'error');
+                    // SteamCMD indirme linkini console'a yazdır
+                    console.log('💡 SteamCMD indirmek için: https://developer.valvesoftware.com/wiki/SteamCMD');
+                    console.log('📥 Direkt indirme linki: https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip');
+                } else {
+                    this.showNotification('error', result.error || this.translate('update_failed'), 'error');
+                }
+            }
+        } catch (error) {
+            this.hideLoading();
+            console.error('Oyun bilgileri güncellenirken hata:', error);
+            this.showNotification('error', this.translate('update_failed'), 'error');
+        }
+    }
+
+    async updateMultipleGameInfo(appIds) {
+        console.log(`Toplu oyun bilgileri güncelleniyor: ${appIds.length} oyun`);
+        this.showLoading(`${this.translate('batch_game_updating')} (${appIds.length} ${this.translate('games_count')})`);
+        
+        try {
+            const result = await ipcRenderer.invoke('update-multiple-game-info', appIds);
+            this.hideLoading();
+            
+            if (result.success) {
+                console.log('Toplu oyun bilgileri başarıyla güncellendi:', result.data);
+                
+                const totalUpdated = result.data.totalUpdated || 0;
+                const totalAlreadyUpToDate = result.data.totalAlreadyUpToDate || 0;
+                const totalManifests = result.data.totalManifests || 0;
+                
+                if (totalUpdated > 0) {
+                    this.showNotification('success', `${this.translate('batch_update_completed')} ${totalUpdated} ${this.translate('manifest_updated')}, ${totalAlreadyUpToDate} zaten günceldi`, 'success');
+                } else if (totalAlreadyUpToDate > 0) {
+                    this.showNotification('info', `${this.translate('all_games_up_to_date')} ${totalAlreadyUpToDate} ${this.translate('manifest_already_up_to_date')}`, 'info');
+                } else {
+                    this.showNotification('info', `${this.translate('batch_update_completed')} ${totalManifests} manifest alındı, güncellenecek manifest bulunamadı`, 'info');
+                }
+                
+                // Her oyun için detaylı sonuçları console'a yazdır
+                Object.keys(result.data.results).forEach(appId => {
+                    const gameResult = result.data.results[appId];
+                    console.log(`AppID ${appId}: ${gameResult.luaUpdateCount} güncellendi, ${gameResult.alreadyUpToDateCount} zaten günceldi`);
+                });
+                
+            } else {
+                console.error('Toplu oyun bilgileri güncellenirken hata:', result.error);
+                
+                // SteamCMD bulunamadı hatası için özel mesaj
+                if (result.error && result.error.includes('SteamCMD bulunamadı')) {
+                    this.showNotification('error', 'SteamCMD bulunamadı. SteamCMD\'yi indirmeniz gerekiyor.', 'error');
+                    // SteamCMD indirme linkini console'a yazdır
+                    console.log('💡 SteamCMD indirmek için: https://developer.valvesoftware.com/wiki/SteamCMD');
+                    console.log('📥 Direkt indirme linki: https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip');
+                } else {
+                    this.showNotification('error', result.error || this.translate('batch_update_failed'), 'error');
+                }
+            }
+        } catch (error) {
+            this.hideLoading();
+            console.error('Toplu oyun bilgileri güncellenirken hata:', error);
+            this.showNotification('error', this.translate('batch_update_failed'), 'error');
+        }
+    }
+
     async getGameImageUrl(appId, gameName) {
         return await this.getSharedHeader(appId);
+    }
+
+    async getParallelGameImages(appIds) {
+        console.log(`🖼️ Paralel oyun resimleri alınıyor: ${appIds.length} oyun`);
+        
+        try {
+            const result = await ipcRenderer.invoke('get-parallel-game-images', appIds);
+            
+            if (result.success) {
+                console.log('✅ Paralel oyun resimleri başarıyla alındı:', result.data);
+                
+                const results = result.data.results || {};
+                const fromCache = result.data.fromCache || 0;
+                const fromAPI = result.data.fromAPI || 0;
+                
+                console.log(`📊 Cache istatistikleri: ${fromCache} cache'den, ${fromAPI} API'den alındı`);
+                
+                let successCount = 0;
+                
+                // Memory cache'e de kaydet (hızlı erişim için)
+                if (!this.imageCache) this.imageCache = new Map();
+                
+                Object.keys(results).forEach(appId => {
+                    const gameResult = results[appId];
+                    if (gameResult.success && gameResult.header_image) {
+                        this.imageCache.set(appId, {
+                            url: gameResult.header_image,
+                            timestamp: Date.now()
+                        });
+                        successCount++;
+                    }
+                });
+                
+                console.log(`✅ ${successCount} oyun resmi memory cache'e kaydedildi`);
+                return results;
+                
+            } else {
+                console.error('❌ Paralel oyun resimleri alınırken hata:', result.error);
+                return null;
+            }
+        } catch (error) {
+            console.error('❌ Paralel oyun resimleri alınırken hata:', error);
+            return null;
+        }
     }
 
     async deleteGame(appId) {
@@ -6958,6 +7898,9 @@ class SteamLibraryUI {
                 case 'library':
                     await this.performLibrarySearch(query.trim());
                     break;
+                case 'denuvo':
+                    await this.performDenuvoSearch(query.trim());
+                    break;
                 default:
                     await this.performSearch(query.trim(), cc, lang, heroSection);
                     break;
@@ -6995,6 +7938,11 @@ class SteamLibraryUI {
             case 'library':
                 if (this.libraryGames) {
                     this.displayLibrarySearchResults(this.libraryGames, document.getElementById('libraryGrid'));
+                }
+                break;
+            case 'denuvo':
+                if (this.denuvoGames) {
+                    this.renderDenuvoGames(this.denuvoGames);
                 }
                 break;
             default:
@@ -7070,27 +8018,14 @@ class SteamLibraryUI {
                 name: gameData.name,
                 type: gameData.type,
                 typeExists: !!gameData.type,
-                isDLC: gameData.type === 'dlc',
+                isGame: gameData.type === 'game',
                 allKeys: Object.keys(gameData)
             });
 
-            if (gameData.type === 'dlc') {
-                console.log(`AppID ${appId} DLC olarak tespit edildi, gösterilmiyor:`, gameData.name);
-                throw new Error(this.translate('dlc_not_supported'));
-            }
-
-            if (gameData.categories && Array.isArray(gameData.categories)) {
-                const isDLC = gameData.categories.some(cat => 
-                    cat.description && cat.description.toLowerCase().includes('downloadable content')
-                );
-                if (isDLC) {
-                    console.log(`AppID ${appId} DLC kategorisi ile tespit edildi, gösterilmiyor:`, gameData.name);
-                    throw new Error(this.translate('dlc_not_supported'));
-                }
-            }
-
-            if (gameData.type && gameData.type !== 'game' && gameData.type !== 'dlc') {
-                console.log(`AppID ${appId} bilinmeyen type ile tespit edildi:`, gameData.type, gameData.name);
+            // Sadece type: "game" olan oyunları göster
+            if (gameData.type !== 'game') {
+                console.log(`AppID ${appId} oyun değil (type: ${gameData.type}), gösterilmiyor:`, gameData.name);
+                throw new Error(`Bu içerik bir oyun değil (type: ${gameData.type})`);
             }
 
             const headerImage = await this.getSharedHeader(appId);
@@ -7165,24 +8100,15 @@ class SteamLibraryUI {
                                 name: gameDetails.name || name,
                                 type: gameDetails.type,
                                 typeExists: !!gameDetails.type,
-                                isDLC: gameDetails.type === 'dlc',
+                                isGame: gameDetails.type === 'game',
                                 allKeys: Object.keys(gameDetails)
                             });
                         }
                         
-                        if (gameDetails && gameDetails.type === 'dlc') {
-                            console.log(`AppID ${appid} DLC olarak tespit edildi, gösterilmiyor:`, gameDetails.name || name);
-                            return null; // DLC'yi filtrele
-                        }
-
-                        if (gameDetails && gameDetails.categories && Array.isArray(gameDetails.categories)) {
-                            const isDLC = gameDetails.categories.some(cat => 
-                                cat.description && cat.description.toLowerCase().includes('downloadable content')
-                            );
-                            if (isDLC) {
-                                console.log(`AppID ${appid} DLC kategorisi ile tespit edildi, gösterilmiyor:`, gameDetails.name || name);
-                                return null; // DLC'yi filtrele
-                            }
+                        // Sadece type: "game" olan oyunları göster
+                        if (gameDetails && gameDetails.type !== 'game') {
+                            console.log(`AppID ${appid} oyun değil (type: ${gameDetails.type}), gösterilmiyor:`, gameDetails.name || name);
+                            return null; // Oyun olmayan içerikleri filtrele
                         }
                         
                         const headerImage = await this.getSharedHeader(appid);
@@ -7461,6 +8387,87 @@ class SteamLibraryUI {
             },
             'settings': {
                 tr: 'Ayarlar', en: 'Settings', de: 'Einstellungen', fr: 'Paramètres', es: 'Configuración', ru: 'Настройки', zh: '设置', ja: '設定', it: 'Impostazioni', pt: 'Configurações', ko: '설정', ar: 'الإعدادات', az: 'Parametrlər'
+            },
+            'denuvo_activation': {
+                tr: 'Denuvo Aktivasyonu', en: 'Denuvo Activation', de: 'Denuvo-Aktivierung', fr: 'Activation Denuvo', es: 'Activación Denuvo', ru: 'Активация Denuvo', zh: 'Denuvo激活', ja: 'Denuvo認証', it: 'Attivazione Denuvo', pt: 'Ativação Denuvo', ko: 'Denuvo 인증', ar: 'تفعيل Denuvo', az: 'Denuvo Aktivasyonu'
+            },
+            'start_denuvo_activation': {
+                tr: 'Denuvo Aktivasyonuna Başla', en: 'Start Denuvo Activation', de: 'Denuvo-Aktivierung starten', fr: 'Démarrer l\'activation Denuvo', es: 'Iniciar activación Denuvo', ru: 'Начать активацию Denuvo', zh: '开始Denuvo激活', ja: 'Denuvo認証を開始', it: 'Avvia attivazione Denuvo', pt: 'Iniciar ativação Denuvo', ko: 'Denuvo 인증 시작', ar: 'بدء تفعيل Denuvo', az: 'Denuvo Aktivasyonuna Başla'
+            },
+            'activation_code': {
+                tr: 'Aktivasyon Kodu', en: 'Activation Code', de: 'Aktivierungscode', fr: 'Code d\'activation', es: 'Código de activación', ru: 'Код активации', zh: '激活码', ja: '認証コード', it: 'Codice di attivazione', pt: 'Código de ativação', ko: '인증 코드', ar: 'رمز التفعيل', az: 'Aktivasyon Kodu'
+            },
+            'copy': {
+                tr: 'Kopyala', en: 'Copy', de: 'Kopieren', fr: 'Copier', es: 'Copiar', ru: 'Копировать', zh: '复制', ja: 'コピー', it: 'Copia', pt: 'Copiar', ko: '복사', ar: 'نسخ', az: 'Köçür'
+            },
+            'copied': {
+                tr: 'Kopyalandı!', en: 'Copied!', de: 'Kopiert!', fr: 'Copié!', es: '¡Copiado!', ru: 'Скопировано!', zh: '已复制!', ja: 'コピー完了!', it: 'Copiato!', pt: 'Copiado!', ko: '복사됨!', ar: 'تم النسخ!', az: 'Köçürüldü!'
+            },
+            'copied_to_clipboard': {
+                tr: 'Panoya kopyalandı!', en: 'Copied to clipboard!', de: 'In Zwischenablage kopiert!', fr: 'Copié dans le presse-papiers!', es: '¡Copiado al portapapeles!', ru: 'Скопировано в буфер обмена!', zh: '已复制到剪贴板!', ja: 'クリップボードにコピー!', it: 'Copiato negli appunti!', pt: 'Copiado para área de transferência!', ko: '클립보드에 복사됨!', ar: 'تم النسخ إلى الحافظة!', az: 'Mübadilə buferinə köçürüldü!'
+            },
+            'open_telegram': {
+                tr: 'Telegram Botunu Aç', en: 'Open Telegram Bot', de: 'Telegram Bot öffnen', fr: 'Ouvrir le bot Telegram', es: 'Abrir bot de Telegram', ru: 'Открыть Telegram бота', zh: '打开Telegram机器人', ja: 'Telegramボットを開く', it: 'Apri bot Telegram', pt: 'Abrir bot do Telegram', ko: 'Telegram 봇 열기', ar: 'فتح بوت تيليجرام', az: 'Telegram Botunu Aç'
+            },
+            'denuvo_info': {
+                tr: 'Merhaba! Denuvolu oyunları kendi hesabınızda oynamanız için yapmanız gereken tek şey telegram botuna bu kodu atarak oyuna sahip Steam hesabının bilgilerini elde etmek. Bundan sonra oyunu 1 kere başlatırsanız denuvo tokeni bilgisayarınızda aktif olmuş olucaktır.', en: 'Hello! The only thing you need to do to play Denuvo games on your own account is to send this code to the telegram bot to get the Steam account information that owns the game. After that, if you start the game once, the denuvo token will be active on your computer.', de: 'Hallo! Das einzige, was Sie tun müssen, um Denuvo-Spiele auf Ihrem eigenen Konto zu spielen, ist, diesen Code an den Telegram-Bot zu senden, um die Steam-Kontoinformationen zu erhalten, die das Spiel besitzen. Danach wird das Denuvo-Token auf Ihrem Computer aktiv, wenn Sie das Spiel einmal starten.', fr: 'Bonjour ! La seule chose que vous devez faire pour jouer aux jeux Denuvo sur votre propre compte est d\'envoyer ce code au bot telegram pour obtenir les informations du compte Steam qui possède le jeu. Après cela, si vous démarrez le jeu une fois, le token denuvo sera actif sur votre ordinateur.', es: '¡Hola! Lo único que debes hacer para jugar juegos Denuvo en tu propia cuenta es enviar este código al bot de telegram para obtener la información de la cuenta de Steam que posee el juego. Después de eso, si inicias el juego una vez, el token denuvo estará activo en tu computadora.', ru: 'Привет! Единственное, что вам нужно сделать, чтобы играть в игры Denuvo на своем собственном аккаунте, это отправить этот код телеграм-боту, чтобы получить информацию об аккаунте Steam, которому принадлежит игра. После этого, если вы запустите игру один раз, токен denuvo будет активен на вашем компьютере.', zh: '你好！要在你自己的账户上玩Denuvo游戏，你唯一需要做的就是将这个代码发送给telegram机器人，以获取拥有游戏的Steam账户信息。之后，如果你启动游戏一次，denuvo令牌将在你的计算机上激活。', ja: 'こんにちは！ご自分のアカウントでDenuvoゲームをプレイするために必要なのは、このコードをTelegramボットに送信して、ゲームを所有するSteamアカウント情報を取得することだけです。その後、ゲームを1回起動すると、Denuvoトークンがコンピューターでアクティブになります。', it: 'Ciao! L\'unica cosa che devi fare per giocare ai giochi Denuvo sul tuo account è inviare questo codice al bot telegram per ottenere le informazioni dell\'account Steam che possiede il gioco. Dopo di che, se avvii il gioco una volta, il token denuvo sarà attivo sul tuo computer.', pt: 'Olá! A única coisa que você precisa fazer para jogar jogos Denuvo em sua própria conta é enviar este código para o bot do telegram para obter as informações da conta Steam que possui o jogo. Depois disso, se você iniciar o jogo uma vez, o token denuvo estará ativo em seu computador.', ko: '안녕하세요! 자신의 계정에서 Denuvo 게임을 플레이하기 위해 해야 할 유일한 일은 이 코드를 텔레그램 봇에 보내서 게임을 소유한 Steam 계정 정보를 얻는 것입니다. 그 후 게임을 한 번 시작하면 denuvo 토큰이 컴퓨터에서 활성화됩니다.', ar: 'مرحبا! الشيء الوحيد الذي تحتاج لفعله للعب ألعاب Denuvo على حسابك الخاص هو إرسال هذا الكود إلى بوت التيليجرام للحصول على معلومات حساب Steam الذي يملك اللعبة. بعد ذلك، إذا بدأت اللعبة مرة واحدة، سيكون رمز denuvo نشطًا على جهاز الكمبيوتر الخاص بك.', az: 'Salam! Denuvo oyunlarını öz hesabınızda oynamaq üçün etməli olduğunuz yeganə şey bu kodu telegram botuna göndərərək oyuna sahib olan Steam hesabının məlumatlarını əldə etməkdir. Bundan sonra oyunu bir dəfə başlatsanız, denuvo tokeni kompüterinizdə aktiv olacaq.'
+            },
+            'denuvo_warning': {
+                tr: 'Hesaplarda her oyun için günlük 5 aktivasyon limiti vardır. Bu hesaplar ücretsiz hesap olduğu için eğer denuvo hatası alırsanız 24 saat içerisinde tekrar denemeniz lazım.', en: 'There is a daily limit of 5 activations per game on accounts. Since these are free accounts, if you get a denuvo error, you need to try again within 24 hours.', de: 'Es gibt ein tägliches Limit von 5 Aktivierungen pro Spiel auf Konten. Da dies kostenlose Konten sind, müssen Sie bei einem Denuvo-Fehler innerhalb von 24 Stunden erneut versuchen.', fr: 'Il y a une limite quotidienne de 5 activations par jeu sur les comptes. Comme ce sont des comptes gratuits, si vous obtenez une erreur denuvo, vous devez réessayer dans les 24 heures.', es: 'Hay un límite diario de 5 activaciones por juego en las cuentas. Dado que estas son cuentas gratuitas, si obtienes un error de denuvo, necesitas intentarlo de nuevo dentro de 24 horas.', ru: 'На аккаунтах есть ежедневный лимит в 5 активаций на игру. Поскольку это бесплатные аккаунты, если вы получите ошибку denuvo, вам нужно попробовать снова в течение 24 часов.', zh: '账户每个游戏每天有5次激活限制。由于这些是免费账户，如果你收到denuvo错误，你需要在24小时内重试。', ja: 'アカウントにはゲームごとに1日5回の認証制限があります。これらは無料アカウントなので、denuvoエラーが発生した場合は、24時間以内に再試行する必要があります。', it: 'C\'è un limite giornaliero di 5 attivazioni per gioco sugli account. Poiché questi sono account gratuiti, se ottieni un errore denuvo, devi riprovare entro 24 ore.', pt: 'Há um limite diário de 5 ativações por jogo nas contas. Como essas são contas gratuitas, se você receber um erro denuvo, precisa tentar novamente dentro de 24 horas.', ko: '계정에는 게임당 하루 5회 인증 제한이 있습니다. 이것들은 무료 계정이므로 denuvo 오류가 발생하면 24시간 이내에 다시 시도해야 합니다.', ar: 'هناك حد يومي من 5 تفعيلات لكل لعبة على الحسابات. نظرًا لأن هذه حسابات مجانية، إذا حصلت على خطأ denuvo، تحتاج للمحاولة مرة أخرى خلال 24 ساعة.', az: 'Hesablarda hər oyun üçün gündəlik 5 aktivasyon limiti var. Bunlar pulsuz hesablar olduğu üçün denuvo xətası alsanız, 24 saat ərzində yenidən cəhd etməlisiniz.'
+            },
+            'important': {
+                tr: 'Önemli', en: 'Important', de: 'Wichtig', fr: 'Important', es: 'Importante', ru: 'Важно', zh: '重要', ja: '重要', it: 'Importante', pt: 'Importante', ko: '중요', ar: 'مهم', az: 'Önəmli'
+            },
+            'close': {
+                tr: 'Kapat', en: 'Close', de: 'Schließen', fr: 'Fermer', es: 'Cerrar', ru: 'Закрыть', zh: '关闭', ja: '閉じる', it: 'Chiudi', pt: 'Fechar', ko: '닫기', ar: 'إغلاق', az: 'Bağla'
+            },
+            'copy_error': {
+                tr: 'Kopyalama hatası!', en: 'Copy error!', de: 'Kopierfehler!', fr: 'Erreur de copie!', es: '¡Error de copia!', ru: 'Ошибка копирования!', zh: '复制错误!', ja: 'コピーエラー!', it: 'Errore di copia!', pt: 'Erro de cópia!', ko: '복사 오류!', ar: 'خطأ في النسخ!', az: 'Köçürmə xətası!'
+            },
+            'activation_error': {
+                tr: 'Aktivasyon hatası!', en: 'Activation error!', de: 'Aktivierungsfehler!', fr: 'Erreur d\'activation!', es: '¡Error de activación!', ru: 'Ошибка активации!', zh: '激活错误!', ja: '認証エラー!', it: 'Errore di attivazione!', pt: 'Erro de ativação!', ko: '인증 오류!', ar: 'خطأ في التفعيل!', az: 'Aktivasyon xətası!'
+            },
+            'auth_required': {
+                tr: 'Yetkilendirme gerekli!', en: 'Authorization required!', de: 'Autorisierung erforderlich!', fr: 'Autorisation requise!', es: '¡Autorización requerida!', ru: 'Требуется авторизация!', zh: '需要授权!', ja: '認証が必要です!', it: 'Autorizzazione richiesta!', pt: 'Autorização necessária!', ko: '인증이 필요합니다!', ar: 'التخويل مطلوب!', az: 'İcazə tələb olunur!'
+            },
+            'games_load_error': {
+                tr: 'Oyunlar yüklenirken hata oluştu!', en: 'Error loading games!', de: 'Fehler beim Laden der Spiele!', fr: 'Erreur lors du chargement des jeux!', es: '¡Error al cargar los juegos!', ru: 'Ошибка загрузки игр!', zh: '加载游戏时出错!', ja: 'ゲーム読み込みエラー!', it: 'Errore nel caricamento dei giochi!', pt: 'Erro ao carregar jogos!', ko: '게임 로딩 오류!', ar: 'خطأ في تحميل الألعاب!', az: 'Oyunları yüklərkən xəta!'
+            },
+            'how_to_use': {
+                tr: 'Nasıl Kullanılır?', en: 'How to Use?', de: 'Wie verwenden?', fr: 'Comment utiliser?', es: '¿Cómo usar?', ru: 'Как использовать?', zh: '如何使用?', ja: '使い方?', it: 'Come usare?', pt: 'Como usar?', ko: '사용 방법?', ar: 'كيفية الاستخدام?', az: 'Necə istifadə edilir?'
+            },
+            'step_1': {
+                tr: 'Aşağıdaki aktivasyon kodunu kopyalayın', en: 'Copy the activation code below', de: 'Kopieren Sie den Aktivierungscode unten', fr: 'Copiez le code d\'activation ci-dessous', es: 'Copia el código de activación de abajo', ru: 'Скопируйте код активации ниже', zh: '复制下面的激活码', ja: '下の認証コードをコピー', it: 'Copia il codice di attivazione qui sotto', pt: 'Copie o código de ativação abaixo', ko: '아래의 인증 코드를 복사하세요', ar: 'انسخ رمز التفعيل أدناه', az: 'Aşağıdakı aktivasyon kodunu köçürün'
+            },
+            'step_2': {
+                tr: '"Telegram Botunu Aç" butonuna tıklayın', en: 'Click "Open Telegram Bot" button', de: 'Klicken Sie auf "Telegram Bot öffnen"', fr: 'Cliquez sur "Ouvrir le bot Telegram"', es: 'Haz clic en "Abrir bot de Telegram"', ru: 'Нажмите "Открыть Telegram бота"', zh: '点击"打开Telegram机器人"', ja: '「Telegramボットを開く」をクリック', it: 'Clicca "Apri bot Telegram"', pt: 'Clique em "Abrir bot do Telegram"', ko: '"Telegram 봇 열기" 버튼 클릭', ar: 'انقر على "فتح بوت تيليجرام"', az: '"Telegram Botunu Aç" düyməsinə basın'
+            },
+            'step_3': {
+                tr: 'Telegram\'da bot\'a kodu gönderin', en: 'Send the code to the bot in Telegram', de: 'Senden Sie den Code an den Bot in Telegram', fr: 'Envoyez le code au bot dans Telegram', es: 'Envía el código al bot en Telegram', ru: 'Отправьте код боту в Telegram', zh: '在Telegram中向机器人发送代码', ja: 'Telegramでボットにコードを送信', it: 'Invia il codice al bot in Telegram', pt: 'Envie o código para o bot no Telegram', ko: 'Telegram에서 봇에게 코드를 보내세요', ar: 'أرسل الكود إلى البوت في تيليجرام', az: 'Telegramda bot\'a kodu göndərin'
+            },
+            'step_4': {
+                tr: 'Bot size Steam hesap bilgilerini verecek', en: 'The bot will give you Steam account information', de: 'Der Bot wird Ihnen Steam-Kontoinformationen geben', fr: 'Le bot vous donnera les informations du compte Steam', es: 'El bot te dará la información de la cuenta Steam', ru: 'Бот даст вам информацию об аккаунте Steam', zh: '机器人会给你Steam账户信息', ja: 'ボットがSteamアカウント情報を提供します', it: 'Il bot ti darà le informazioni dell\'account Steam', pt: 'O bot lhe dará as informações da conta Steam', ko: '봇이 Steam 계정 정보를 제공할 것입니다', ar: 'سيعطيك البوت معلومات حساب Steam', az: 'Bot sizə Steam hesab məlumatlarını verəcək'
+            },
+            'step_5': {
+                tr: 'O hesap bilgileriyle oyunu 1 kere başlatın', en: 'Start the game once with those account details', de: 'Starten Sie das Spiel einmal mit diesen Kontodaten', fr: 'Démarrez le jeu une fois avec ces détails de compte', es: 'Inicia el juego una vez con esos detalles de cuenta', ru: 'Запустите игру один раз с этими данными аккаунта', zh: '用这些账户信息启动游戏一次', ja: 'そのアカウント情報でゲームを1回起動', it: 'Avvia il gioco una volta con quei dettagli dell\'account', pt: 'Inicie o jogo uma vez com esses detalhes da conta', ko: '해당 계정 정보로 게임을 한 번 시작하세요', ar: 'ابدأ اللعبة مرة واحدة بتلك التفاصيل', az: 'O hesab məlumatları ilə oyunu 1 dəfə başladın'
+            },
+            'step_6': {
+                tr: 'Denuvo tokeni bilgisayarınızda aktif olacak', en: 'Denuvo token will be active on your computer', de: 'Denuvo-Token wird auf Ihrem Computer aktiv sein', fr: 'Le token Denuvo sera actif sur votre ordinateur', es: 'El token Denuvo estará activo en tu computadora', ru: 'Токен Denuvo будет активен на вашем компьютере', zh: 'Denuvo令牌将在你的计算机上激活', ja: 'Denuvoトークンがコンピューターでアクティブになります', it: 'Il token Denuvo sarà attivo sul tuo computer', pt: 'O token Denuvo estará ativo em seu computador', ko: 'Denuvo 토큰이 컴퓨터에서 활성화됩니다', ar: 'سيكون رمز Denuvo نشطًا على جهاز الكمبيوتر', az: 'Denuvo tokeni kompüterinizdə aktiv olacaq'
+            },
+            'warning_1': {
+                tr: 'Her oyun için günlük 5 aktivasyon limiti vardır', en: 'There is a daily limit of 5 activations per game', de: 'Es gibt ein tägliches Limit von 5 Aktivierungen pro Spiel', fr: 'Il y a une limite quotidienne de 5 activations par jeu', es: 'Hay un límite diario de 5 activaciones por juego', ru: 'Есть ежедневный лимит в 5 активаций на игру', zh: '每个游戏每天有5次激活限制', ja: 'ゲームごとに1日5回の認証制限があります', it: 'C\'è un limite giornaliero di 5 attivazioni per gioco', pt: 'Há um limite diário de 5 ativações por jogo', ko: '게임당 하루 5회 인증 제한이 있습니다', ar: 'هناك حد يومي من 5 تفعيلات لكل لعبة', az: 'Hər oyun üçün gündəlik 5 aktivasyon limiti var'
+            },
+            'warning_2': {
+                tr: 'Bu hesaplar ücretsiz hesap olduğu için limit dolabilir', en: 'Since these are free accounts, the limit may be reached', de: 'Da dies kostenlose Konten sind, kann das Limit erreicht werden', fr: 'Comme ce sont des comptes gratuits, la limite peut être atteinte', es: 'Dado que estas son cuentas gratuitas, el límite puede alcanzarse', ru: 'Поскольку это бесплатные аккаунты, лимит может быть достигнут', zh: '由于这些是免费账户，可能会达到限制', ja: 'これらは無料アカウントなので、制限に達する可能性があります', it: 'Poiché questi sono account gratuiti, il limite potrebbe essere raggiunto', pt: 'Como essas são contas gratuitas, o limite pode ser atingido', ko: '이것들은 무료 계정이므로 제한에 도달할 수 있습니다', ar: 'نظرًا لأن هذه حسابات مجانية، قد يتم الوصول إلى الحد', az: 'Bunlar pulsuz hesablar olduğu üçün limit dolabilər'
+            },
+            'warning_3': {
+                tr: 'Denuvo hatası alırsanız 24 saat bekleyin', en: 'If you get a Denuvo error, wait 24 hours', de: 'Wenn Sie einen Denuvo-Fehler erhalten, warten Sie 24 Stunden', fr: 'Si vous obtenez une erreur Denuvo, attendez 24 heures', es: 'Si obtienes un error de Denuvo, espera 24 horas', ru: 'Если вы получите ошибку Denuvo, подождите 24 часа', zh: '如果你收到Denuvo错误，请等待24小时', ja: 'Denuvoエラーが発生した場合は24時間待機', it: 'Se ottieni un errore Denuvo, aspetta 24 ore', pt: 'Se você receber um erro Denuvo, espere 24 horas', ko: 'Denuvo 오류가 발생하면 24시간 기다리세요', ar: 'إذا حصلت على خطأ Denuvo، انتظر 24 ساعة', az: 'Denuvo xətası alsanız 24 saat gözləyin'
+            },
+            'warning_4': {
+                tr: 'Aktivasyon kodu sadece 1 kere kullanılabilir', en: 'Activation code can only be used once', de: 'Aktivierungscode kann nur einmal verwendet werden', fr: 'Le code d\'activation ne peut être utilisé qu\'une fois', es: 'El código de activación solo se puede usar una vez', ru: 'Код активации можно использовать только один раз', zh: '激活码只能使用一次', ja: '認証コードは1回のみ使用可能', it: 'Il codice di attivazione può essere utilizzato solo una volta', pt: 'O código de ativação só pode ser usado uma vez', ko: '인증 코드는 한 번만 사용할 수 있습니다', ar: 'رمز التفعيل يمكن استخدامه مرة واحدة فقط', az: 'Aktivasyon kodu yalnız 1 dəfə istifadə edilə bilər'
+            },
+            'search_games_or_appid': {
+                tr: 'Oyun adı veya App ID ile ara...', en: 'Search by game name or App ID...', de: 'Nach Spielname oder App-ID suchen...', fr: 'Rechercher par nom de jeu ou ID d\'app...', es: 'Buscar por nombre de juego o ID de app...', ru: 'Поиск по названию игры или ID приложения...', zh: '按游戏名称或应用ID搜索...', ja: 'ゲーム名またはアプリIDで検索...', it: 'Cerca per nome gioco o ID app...', pt: 'Pesquisar por nome do jogo ou ID do app...', ko: '게임 이름 또는 앱 ID로 검색...', ar: 'البحث باسم اللعبة أو معرف التطبيق...', az: 'Oyun adı və ya App ID ilə axtar...'
             },
             
             'game_id': {
@@ -8578,6 +9585,72 @@ class SteamLibraryUI {
             'start_game': {
                 tr: 'Oyunu Başlat', en: 'Launch Game', de: 'Spiel starten', fr: 'Lancer le jeu', es: 'Iniciar juego', ru: 'Запустить игру', zh: '启动游戏', ja: 'ゲーム開始', it: 'Avvia gioco', pt: 'Iniciar jogo', ko: '게임 시작', ar: 'تشغيل اللعبة', az: 'Oyunu başlat'
             },
+            'update_game': {
+                tr: 'Güncelle', en: 'Update', de: 'Aktualisieren', fr: 'Mettre à jour', es: 'Actualizar', ru: 'Обновить', zh: '更新', ja: '更新', it: 'Aggiorna', pt: 'Atualizar', ko: '업데이트', ar: 'تحديث', az: 'Yenilə'
+            },
+            'batch_update_all': {
+                tr: 'Toplu Güncelle', en: 'Batch Update', de: 'Batch-Update', fr: 'Mise à jour groupée', es: 'Actualización por lotes', ru: 'Пакетное обновление', zh: '批量更新', ja: '一括更新', it: 'Aggiornamento batch', pt: 'Atualização em lote', ko: '일괄 업데이트', ar: 'تحديث مجمع', az: 'Toplu Yenilə'
+            },
+            'batch_update_confirm_title': {
+                tr: 'Toplu Güncelleme Onayı', en: 'Batch Update Confirmation', de: 'Batch-Update-Bestätigung', fr: 'Confirmation de mise à jour groupée', es: 'Confirmación de actualización por lotes', ru: 'Подтверждение пакетного обновления', zh: '批量更新确认', ja: '一括更新確認', it: 'Conferma aggiornamento batch', pt: 'Confirmação de atualização em lote', ko: '일괄 업데이트 확인', ar: 'تأكيد التحديث المجمع', az: 'Toplu Yeniləmə Təsdiqi'
+            },
+            'batch_update_games_count': {
+                tr: 'Güncellenecek oyun sayısı:', en: 'Number of games to update:', de: 'Anzahl der zu aktualisierenden Spiele:', fr: 'Nombre de jeux à mettre à jour:', es: 'Número de juegos a actualizar:', ru: 'Количество игр для обновления:', zh: '要更新的游戏数量:', ja: '更新するゲーム数:', it: 'Numero di giochi da aggiornare:', pt: 'Número de jogos para atualizar:', ko: '업데이트할 게임 수:', ar: 'عدد الألعاب للتحديث:', az: 'Yenilənəcək oyun sayı:'
+            },
+            'batch_update_estimated_time': {
+                tr: 'Tahmini süre:', en: 'Estimated time:', de: 'Geschätzte Zeit:', fr: 'Temps estimé:', es: 'Tiempo estimado:', ru: 'Примерное время:', zh: '预计时间:', ja: '推定時間:', it: 'Tempo stimato:', pt: 'Tempo estimado:', ko: '예상 시간:', ar: 'الوقت المقدر:', az: 'Təxmini vaxt:'
+            },
+            'batch_update_time_estimate': {
+                tr: '2-5 dakika', en: '2-5 minutes', de: '2-5 Minuten', fr: '2-5 minutes', es: '2-5 minutos', ru: '2-5 минут', zh: '2-5分钟', ja: '2-5分', it: '2-5 minuti', pt: '2-5 minutos', ko: '2-5분', ar: '2-5 دقائق', az: '2-5 dəqiqə'
+            },
+            'batch_update_process': {
+                tr: 'İşlem:', en: 'Process:', de: 'Prozess:', fr: 'Processus:', es: 'Proceso:', ru: 'Процесс:', zh: '过程:', ja: 'プロセス:', it: 'Processo:', pt: 'Processo:', ko: '프로세스:', ar: 'العملية:', az: 'Proses:'
+            },
+            'batch_update_process_desc': {
+                tr: 'Oyun manifest dosyalarını güncelleme', en: 'Updating game manifest files', de: 'Aktualisierung der Spiel-Manifest-Dateien', fr: 'Mise à jour des fichiers manifeste des jeux', es: 'Actualizando archivos de manifiesto del juego', ru: 'Обновление файлов манифеста игр', zh: '更新游戏清单文件', ja: 'ゲームマニフェストファイルの更新', it: 'Aggiornamento dei file manifest dei giochi', pt: 'Atualizando arquivos de manifesto do jogo', ko: '게임 매니페스트 파일 업데이트', ar: 'تحديث ملفات بيان اللعبة', az: 'Oyun manifest fayllarını yeniləmə'
+            },
+            'batch_update_warning': {
+                tr: 'Bu işlem sırasında uygulamayı kapatmayın. İşlem tamamlanana kadar bekleyin.', en: 'Do not close the application during this process. Wait until the operation is complete.', de: 'Schließen Sie die Anwendung während dieses Vorgangs nicht. Warten Sie, bis der Vorgang abgeschlossen ist.', fr: 'Ne fermez pas l\'application pendant ce processus. Attendez que l\'opération soit terminée.', es: 'No cierres la aplicación durante este proceso. Espera hasta que la operación esté completa.', ru: 'Не закрывайте приложение во время этого процесса. Дождитесь завершения операции.', zh: '在此过程中请勿关闭应用程序。等待操作完成。', ja: 'このプロセス中はアプリケーションを閉じないでください。操作が完了するまでお待ちください。', it: 'Non chiudere l\'applicazione durante questo processo. Attendere fino al completamento dell\'operazione.', pt: 'Não feche o aplicativo durante este processo. Aguarde até que a operação esteja completa.', ko: '이 프로세스 중에는 애플리케이션을 닫지 마세요. 작업이 완료될 때까지 기다리세요.', ar: 'لا تغلق التطبيق أثناء هذه العملية. انتظر حتى تكتمل العملية.', az: 'Bu proses zamanı tətbiqi bağlamayın. Əməliyyat tamamlanana qədər gözləyin.'
+            },
+            'batch_update_confirm': {
+                tr: 'Güncellemeyi Başlat', en: 'Start Update', de: 'Update starten', fr: 'Démarrer la mise à jour', es: 'Iniciar actualización', ru: 'Начать обновление', zh: '开始更新', ja: '更新開始', it: 'Avvia aggiornamento', pt: 'Iniciar atualização', ko: '업데이트 시작', ar: 'بدء التحديث', az: 'Yeniləməni Başlat'
+            },
+            'no_games_to_update': {
+                tr: 'Kütüphanenizde güncellenecek oyun bulunamadı', en: 'No games found to update in your library', de: 'Keine Spiele zum Aktualisieren in Ihrer Bibliothek gefunden', fr: 'Aucun jeu trouvé à mettre à jour dans votre bibliothèque', es: 'No se encontraron juegos para actualizar en tu biblioteca', ru: 'В вашей библиотеке не найдено игр для обновления', zh: '在您的库中未找到要更新的游戏', ja: 'ライブラリに更新するゲームが見つかりません', it: 'Nessun gioco trovato da aggiornare nella tua libreria', pt: 'Nenhum jogo encontrado para atualizar na sua biblioteca', ko: '라이브러리에서 업데이트할 게임을 찾을 수 없습니다', ar: 'لم يتم العثور على ألعاب للتحديث في مكتبتك', az: 'Kitabxananızda yenilənəcək oyun tapılmadı'
+            },
+            'batch_update_failed': {
+                tr: 'Toplu güncelleme başarısız', en: 'Batch update failed', de: 'Batch-Update fehlgeschlagen', fr: 'Échec de la mise à jour groupée', es: 'Actualización por lotes falló', ru: 'Пакетное обновление не удалось', zh: '批量更新失败', ja: '一括更新に失敗しました', it: 'Aggiornamento batch fallito', pt: 'Atualização em lote falhou', ko: '일괄 업데이트 실패', ar: 'فشل التحديث المجمع', az: 'Toplu yeniləmə uğursuz oldu'
+            },
+            'game_updating': {
+                tr: 'Oyun bilgileri güncelleniyor...', en: 'Updating game information...', de: 'Spielinformationen werden aktualisiert...', fr: 'Mise à jour des informations du jeu...', es: 'Actualizando información del juego...', ru: 'Обновление информации об игре...', zh: '正在更新游戏信息...', ja: 'ゲーム情報を更新中...', it: 'Aggiornamento informazioni gioco...', pt: 'Atualizando informações do jogo...', ko: '게임 정보 업데이트 중...', ar: 'تحديث معلومات اللعبة...', az: 'Oyun məlumatları yenilənir...'
+            },
+            'batch_game_updating': {
+                tr: 'Toplu oyun bilgileri güncelleniyor...', en: 'Updating batch game information...', de: 'Batch-Spielinformationen werden aktualisiert...', fr: 'Mise à jour des informations de jeux groupés...', es: 'Actualizando información de juegos por lotes...', ru: 'Обновление информации о пакетных играх...', zh: '正在更新批量游戏信息...', ja: '一括ゲーム情報を更新中...', it: 'Aggiornamento informazioni giochi batch...', pt: 'Atualizando informações de jogos em lote...', ko: '일괄 게임 정보 업데이트 중...', ar: 'تحديث معلومات الألعاب المجمعة...', az: 'Toplu oyun məlumatları yenilənir...'
+            },
+            'game_updated_success': {
+                tr: 'Oyun güncellendi!', en: 'Game updated!', de: 'Spiel aktualisiert!', fr: 'Jeu mis à jour!', es: '¡Juego actualizado!', ru: 'Игра обновлена!', zh: '游戏已更新！', ja: 'ゲームが更新されました！', it: 'Gioco aggiornato!', pt: 'Jogo atualizado!', ko: '게임이 업데이트되었습니다!', ar: 'تم تحديث اللعبة!', az: 'Oyun yeniləndi!'
+            },
+            'manifest_updated': {
+                tr: 'manifest güncellendi', en: 'manifest updated', de: 'Manifest aktualisiert', fr: 'manifeste mis à jour', es: 'manifiesto actualizado', ru: 'манифест обновлен', zh: '清单已更新', ja: 'マニフェストが更新されました', it: 'manifest aggiornato', pt: 'manifesto atualizado', ko: '매니페스트 업데이트됨', ar: 'تم تحديث البيان', az: 'manifest yeniləndi'
+            },
+            'batch_update_completed': {
+                tr: 'Toplu güncelleme tamamlandı!', en: 'Batch update completed!', de: 'Batch-Update abgeschlossen!', fr: 'Mise à jour groupée terminée!', es: '¡Actualización por lotes completada!', ru: 'Пакетное обновление завершено!', zh: '批量更新完成！', ja: '一括更新が完了しました！', it: 'Aggiornamento batch completato!', pt: 'Atualização em lote concluída!', ko: '일괄 업데이트 완료!', ar: 'تم إكمال التحديث المجمع!', az: 'Toplu yeniləmə tamamlandı!'
+            },
+            'all_games_up_to_date': {
+                tr: 'Tüm oyunlar zaten güncel!', en: 'All games are already up to date!', de: 'Alle Spiele sind bereits auf dem neuesten Stand!', fr: 'Tous les jeux sont déjà à jour!', es: '¡Todos los juegos ya están actualizados!', ru: 'Все игры уже обновлены!', zh: '所有游戏都已是最新版本！', ja: 'すべてのゲームは既に最新です！', it: 'Tutti i giochi sono già aggiornati!', pt: 'Todos os jogos já estão atualizados!', ko: '모든 게임이 이미 최신 상태입니다!', ar: 'جميع الألعاب محدثة بالفعل!', az: 'Bütün oyunlar artıq güncəldir!'
+            },
+            'manifest_already_up_to_date': {
+                tr: 'manifest zaten son sürümde', en: 'manifest already up to date', de: 'Manifest bereits auf dem neuesten Stand', fr: 'manifeste déjà à jour', es: 'manifiesto ya actualizado', ru: 'манифест уже обновлен', zh: '清单已是最新版本', ja: 'マニフェストは既に最新です', it: 'manifest già aggiornato', pt: 'manifesto já atualizado', ko: '매니페스트가 이미 최신 상태입니다', ar: 'البيان محدث بالفعل', az: 'manifest artıq son versiyada'
+            },
+            'update_failed': {
+                tr: 'Güncelleme başarısız', en: 'Update failed', de: 'Update fehlgeschlagen', fr: 'Échec de la mise à jour', es: 'Actualización falló', ru: 'Обновление не удалось', zh: '更新失败', ja: '更新に失敗しました', it: 'Aggiornamento fallito', pt: 'Atualização falhou', ko: '업데이트 실패', ar: 'فشل التحديث', az: 'Yeniləmə uğursuz oldu'
+            },
+            'games_count': {
+                tr: 'oyun', en: 'games', de: 'Spiele', fr: 'jeux', es: 'juegos', ru: 'игр', zh: '游戏', ja: 'ゲーム', it: 'giochi', pt: 'jogos', ko: '게임', ar: 'ألعاب', az: 'oyun'
+            },
+            'cancel': {
+                tr: 'İptal', en: 'Cancel', de: 'Abbrechen', fr: 'Annuler', es: 'Cancelar', ru: 'Отмена', zh: '取消', ja: 'キャンセル', it: 'Annulla', pt: 'Cancelar', ko: '취소', ar: 'إلغاء', az: 'Ləğv et'
+            },
             'remove_game': {
                 tr: 'Oyunu Sil', en: 'Delete Game', de: 'Spiel löschen', fr: 'Supprimer le jeu', es: 'Eliminar juego', ru: 'Удалить игру', zh: '删除游戏', ja: 'ゲーム削除', it: 'Elimina gioco', pt: 'Excluir jogo', ko: '게임 삭제', ar: 'حذف اللعبة', az: 'Oyunu sil'
             },
@@ -8998,14 +10071,44 @@ class SteamLibraryUI {
                 de: 'Datei zum Herunterladen auswählen',
                 fr: 'Sélectionner le fichier à télécharger',
                 es: 'Seleccionar archivo para descargar',
-                ru: 'Выберите файл для скачивания',
+                ru: 'Выберите файл для загрузки',
                 zh: '选择要下载的文件',
                 ja: 'ダウンロードするファイルを選択',
                 it: 'Seleziona file da scaricare',
                 pt: 'Selecionar arquivo para baixar',
                 ko: '다운로드할 파일 선택',
-                pl: 'Wybierz plik do pobrania',
+                ar: 'اختر الملف للتحميل',
                 az: 'Yüklənəcək faylı seçin'
+            },
+            'select_file_description': {
+                tr: 'İndirmek istediğiniz dosyayı seçin:',
+                en: 'Select the file you want to download:',
+                de: 'Wählen Sie die Datei aus, die Sie herunterladen möchten:',
+                fr: 'Sélectionnez le fichier que vous souhaitez télécharger:',
+                es: 'Selecciona el archivo que quieres descargar:',
+                ru: 'Выберите файл, который хотите скачать:',
+                zh: '选择您要下载的文件：',
+                ja: 'ダウンロードしたいファイルを選択してください：',
+                it: 'Seleziona il file che vuoi scaricare:',
+                pt: 'Selecione o arquivo que deseja baixar:',
+                ko: '다운로드하고 싶은 파일을 선택하세요:',
+                ar: 'اختر الملف الذي تريد تحميله:',
+                az: 'Yükləmək istədiyiniz faylı seçin:'
+            },
+            'download': {
+                tr: 'İndir',
+                en: 'Download',
+                de: 'Herunterladen',
+                fr: 'Télécharger',
+                es: 'Descargar',
+                ru: 'Скачать',
+                zh: '下载',
+                ja: 'ダウンロード',
+                it: 'Scarica',
+                pt: 'Baixar',
+                ko: '다운로드',
+                ar: 'تحميل',
+                az: 'Yüklə'
             },
             'downloading': {
                 tr: 'İndiriliyor...',
@@ -10832,6 +11935,13 @@ class SteamLibraryUI {
                                                 <line x1="12" y1="15" x2="12" y2="3"/>
                                             </svg>
                                 </div>
+                                        <div class="preview-bubble-item" data-icon="denuvo">
+                                            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/>
+                                                <path d="M8 12l2 2 4-4"/>
+                                                <path d="M16 8h-6v8h6z"/>
+                                            </svg>
+                                </div>
                                         <div class="preview-bubble-item" data-icon="settings">
                                             <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                                 <circle cx="12" cy="12" r="3"/>
@@ -11016,6 +12126,40 @@ class SteamLibraryUI {
                                     <div class="color-input-group">
                                         <label data-i18n="glow_effect">Glow Efekti</label>
                                         <input id="bubbleManualInstallIconGlow" type="color" value="${this.toHexColor(theme['--bubble-manualinstall-icon-glow'] || '#ffa726')}" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Denuvo Icon -->
+                            <div class="icon-subcategory compact">
+                                <div class="subcategory-header">
+                                    <h5 data-i18n="denuvo_icon">Denuvo İkonu</h5>
+                                    <div class="single-icon-preview">
+                                        <div class="preview-bubble-item denuvo-single">
+                                            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/>
+                                                <path d="M8 12l2 2 4-4"/>
+                                                <path d="M16 8h-6v8h6z"/>
+                                            </svg>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="icon-controls-grid">
+                                    <div class="color-input-group">
+                                        <label data-i18n="icon">İkon</label>
+                                        <input id="bubbleDenuvoIconColor" type="color" value="${this.toHexColor(theme['--bubble-denuvo-icon-color'] || '#a1a1aa')}" />
+                                    </div>
+                                    <div class="color-input-group">
+                                        <label data-i18n="background">Arka Plan</label>
+                                        <input id="bubbleDenuvoIconBg" type="color" value="${this.toHexColor(theme['--bubble-denuvo-icon-bg'] || 'transparent')}" />
+                                    </div>
+                                    <div class="color-input-group">
+                                        <label data-i18n="hover_background">Hover Arka Plan</label>
+                                        <input id="bubbleDenuvoIconHoverBg" type="color" value="${this.toHexColor(theme['--bubble-denuvo-icon-hover-bg'] || '#00d4ff')}" />
+                                    </div>
+                                    <div class="color-input-group">
+                                        <label data-i18n="glow_effect">Glow Efekti</label>
+                                        <input id="bubbleDenuvoIconGlow" type="color" value="${this.toHexColor(theme['--bubble-denuvo-icon-glow'] || '#00d4ff')}" />
                                     </div>
                                 </div>
                             </div>
@@ -11817,29 +12961,55 @@ class SteamLibraryUI {
 
     resetIconSettings() {
         try {
+            // Her zaman varsayılan ayarlara sıfırla
             const defaultPreset = this.getThemePresets()['Dark'];
             if (defaultPreset) {
+                console.log('Resetting to default settings');
+                
+                // Bildirim göstermemek için flag set et
+                this.isLoadingSettings = true;
+                
+                // CSS değişkenlerini varsayılan değerlerle güncelle
                 Object.entries(defaultPreset).forEach(([cssVar, value]) => {
                     document.documentElement.style.setProperty(cssVar, value);
                 });
                 
-                const iconInputs = document.querySelectorAll('#iconDesigner input[type="color"]');
+                // Input değerlerini varsayılan değerlerle güncelle
+                const iconInputs = document.querySelectorAll('#iconDesigner input[type="color"], #iconDesigner input[type="range"]');
                 iconInputs.forEach(input => {
                     const inputId = input.id;
-                    if (inputId.includes('Icon')) {
-                        const cssVar = `--${inputId.replace(/([A-Z])/g, '-$1').toLowerCase()}`;
-                        const defaultValue = defaultPreset[cssVar];
+                    if (inputId.includes('Icon') || inputId.includes('hamburger')) {
+                        let defaultValue;
+                        
+                        // Hamburger menü için özel varsayılan değerler
+                        if (inputId === 'hamburgerLineWeight') {
+                            defaultValue = '2px';
+                        } else if (inputId === 'hamburgerLineGap') {
+                            defaultValue = '3px';
+                        } else {
+                            const cssVar = `--${inputId.replace(/([A-Z])/g, '-$1').toLowerCase()}`;
+                            defaultValue = defaultPreset[cssVar];
+                        }
+                        
                         if (defaultValue) {
-                            input.value = this.toHexColor(defaultValue);
+                            if (input.type === 'color') {
+                                input.value = this.toHexColor(defaultValue);
+                            } else if (input.type === 'range') {
+                                input.value = defaultValue.replace('px', '');
+                            }
+                            
+                            // CSS değişkenlerini doğrudan güncelle
+                            this.updateIconSettingsDirectly(inputId, input.value);
                         }
                     }
                 });
                 
                 this.refreshHoverStyles();
                 
-                this.updateConfig({ themePreset: 'Dark', customTheme: defaultPreset });
+                // Flag'i sıfırla
+                this.isLoadingSettings = false;
                 
-                this.showNotification('success', 'İkon ayarları sıfırlandı', 'success');
+                this.showNotification('success', 'İkon ayarları varsayılana sıfırlandı', 'success');
             }
         } catch (error) {
             console.error('İkon ayarları sıfırlama hatası:', error);
@@ -11850,7 +13020,10 @@ class SteamLibraryUI {
     updateIconColor(inputId, value) {
         console.log('updateIconColor called:', inputId, value);
         
-        this.isRealTimeUpdate = true;
+        // Yükleme sırasında bildirim gösterme
+        if (!this.isLoadingSettings) {
+            this.isRealTimeUpdate = true;
+        }
         
         const cssVarMap = {
             'bubbleHomeIconColor': '--bubble-home-icon-color',
@@ -12189,18 +13362,49 @@ class SteamLibraryUI {
         this.config.iconSettings = iconSettings;
         this.updateConfig({ iconSettings: iconSettings });
         
+        // Bildirim göstermemek için flag set et
+        this.isLoadingSettings = true;
+        
         Object.entries(iconSettings).forEach(([inputId, value]) => {
-            if (inputId.includes('Color') || inputId.includes('Bg')) {
-                this.updateIconColor(inputId, value);
-            } else if (inputId.includes('Weight') || inputId.includes('Gap')) {
-                this.updateIconRange(inputId, value.replace('px', ''));
-            }
+            // CSS değişkenlerini doğrudan güncelle (bildirim göstermeden)
+            this.updateIconSettingsDirectly(inputId, value);
         });
+        
+        // Flag'i sıfırla
+        this.isLoadingSettings = false;
         
         this.refreshHoverStyles();
         
         this.isRealTimeUpdate = false;
         this.showSaveSuccess();
+    }
+
+    showSaveSuccess() {
+        if (this.isRealTimeUpdate) return;
+        
+        const existingNotifications = document.querySelectorAll('.icon-notification');
+        existingNotifications.forEach(notification => notification.remove());
+        
+        const notification = document.createElement('div');
+        notification.className = 'icon-notification success';
+        notification.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 12l2 2 4-4"/>
+                <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/>
+            </svg>
+            <span data-i18n="icon_settings_saved">İkon ayarları kaydedildi</span>
+        `;
+        
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            notification.classList.add('show');
+        }, 100);
+        
+        setTimeout(() => {
+            notification.classList.remove('show');
+            setTimeout(() => notification.remove(), 300);
+        }, 2000);
     }
 
     showResetSuccess() {
@@ -12361,11 +13565,12 @@ class SteamLibraryUI {
         });
 
         this.setupBubbleIconListeners();
+        this.setupDenuvoHoverFix();
     }
 
     setupBubbleIconListeners() {
         const bubbleIcons = [
-                            'home', 'repairFix', 'bypass', 'library', 'manualInstall', 'settings'
+                            'home', 'repairFix', 'bypass', 'library', 'manualInstall', 'settings', 'denuvo'
         ];
 
         bubbleIcons.forEach(iconType => {
@@ -12404,6 +13609,113 @@ class SteamLibraryUI {
                 });
             }
         });
+    }
+
+    setupDenuvoHoverFix() {
+        const denuvoButton = document.getElementById('bubbleDenuvo');
+        if (denuvoButton) {
+            denuvoButton.addEventListener('mouseenter', () => {
+                const hoverBg = getComputedStyle(document.documentElement).getPropertyValue('--bubble-denuvo-icon-hover-bg').trim() || '#00d4ff';
+                denuvoButton.style.setProperty('background', hoverBg, 'important');
+                denuvoButton.style.setProperty('background-color', hoverBg, 'important');
+            });
+            
+            denuvoButton.addEventListener('mouseleave', () => {
+                const normalBg = getComputedStyle(document.documentElement).getPropertyValue('--bubble-denuvo-icon-bg').trim() || 'transparent';
+                denuvoButton.style.setProperty('background', normalBg, 'important');
+                denuvoButton.style.setProperty('background-color', normalBg, 'important');
+            });
+        }
+    }
+
+    loadIconSettings() {
+        try {
+            if (this.config.iconSettings) {
+                console.log('Loading icon settings from config:', this.config.iconSettings);
+                
+                // Bildirim göstermemek için flag set et
+                this.isLoadingSettings = true;
+                
+                // Input değerlerini güncelle
+                Object.entries(this.config.iconSettings).forEach(([inputId, value]) => {
+                    const input = document.getElementById(inputId);
+                    if (input) {
+                        if (input.type === 'color') {
+                            input.value = value;
+                        } else if (input.type === 'range') {
+                            input.value = value.replace('px', '');
+                        }
+                        
+                        // CSS değişkenlerini doğrudan güncelle (bildirim göstermeden)
+                        this.updateIconSettingsDirectly(inputId, value);
+                    }
+                });
+                
+                this.refreshHoverStyles();
+                console.log('Icon settings loaded successfully');
+                
+                // Flag'i sıfırla
+                this.isLoadingSettings = false;
+            }
+        } catch (error) {
+            console.error('İkon ayarları yükleme hatası:', error);
+            this.isLoadingSettings = false;
+        }
+    }
+
+    updateIconSettingsDirectly(inputId, value) {
+        // Bildirim göstermeden doğrudan CSS değişkenlerini güncelle
+        const cssVarMap = {
+            'bubbleHomeIconColor': '--bubble-home-icon-color',
+            'bubbleHomeIconBg': '--bubble-home-icon-bg',
+            'bubbleHomeIconHoverColor': '--bubble-home-icon-hover-color',
+            'bubbleHomeIconHoverBg': '--bubble-home-icon-hover-bg',
+            'bubbleHomeIconGlow': '--bubble-home-icon-glow',
+            'bubbleRepairFixIconColor': '--bubble-repairfix-icon-color',
+            'bubbleRepairFixIconBg': '--bubble-repairfix-icon-bg',
+            'bubbleRepairFixIconHoverColor': '--bubble-repairfix-icon-hover-color',
+            'bubbleRepairFixIconHoverBg': '--bubble-repairfix-icon-hover-bg',
+            'bubbleRepairFixIconGlow': '--bubble-repairfix-icon-glow',
+            'bubbleBypassIconColor': '--bubble-bypass-icon-color',
+            'bubbleBypassIconBg': '--bubble-bypass-icon-bg',
+            'bubbleBypassIconHoverColor': '--bubble-bypass-icon-hover-color',
+            'bubbleBypassIconHoverBg': '--bubble-bypass-icon-hover-bg',
+            'bubbleBypassIconGlow': '--bubble-bypass-icon-glow',
+            'bubbleLibraryIconColor': '--bubble-library-icon-color',
+            'bubbleLibraryIconBg': '--bubble-library-icon-bg',
+            'bubbleLibraryIconHoverColor': '--bubble-library-icon-hover-color',
+            'bubbleLibraryIconHoverBg': '--bubble-library-icon-hover-bg',
+            'bubbleLibraryIconGlow': '--bubble-library-icon-glow',
+            'bubbleManualInstallIconColor': '--bubble-manualinstall-icon-color',
+            'bubbleManualInstallIconBg': '--bubble-manualinstall-icon-bg',
+            'bubbleManualInstallIconHoverColor': '--bubble-manualinstall-icon-hover-color',
+            'bubbleManualInstallIconHoverBg': '--bubble-manualinstall-icon-hover-bg',
+            'bubbleManualInstallIconGlow': '--bubble-manualinstall-icon-glow',
+            'bubbleSettingsIconColor': '--bubble-settings-icon-color',
+            'bubbleSettingsIconBg': '--bubble-settings-icon-bg',
+            'bubbleSettingsIconHoverColor': '--bubble-settings-icon-hover-color',
+            'bubbleSettingsIconHoverBg': '--bubble-settings-icon-hover-bg',
+            'bubbleSettingsIconGlow': '--bubble-settings-icon-glow',
+            'bubbleDenuvoIconColor': '--bubble-denuvo-icon-color',
+            'bubbleDenuvoIconBg': '--bubble-denuvo-icon-bg',
+            'bubbleDenuvoIconHoverColor': '--bubble-denuvo-icon-hover-color',
+            'bubbleDenuvoIconHoverBg': '--bubble-denuvo-icon-hover-bg',
+            'bubbleDenuvoIconGlow': '--bubble-denuvo-icon-glow',
+            'hamburgerColor': '--hamburger-color',
+            'hamburgerBg': '--hamburger-bg',
+            'hamburgerHoverColor': '--hamburger-hover-color',
+            'hamburgerHoverBg': '--hamburger-hover-bg',
+            'hamburgerLineWeight': '--hamburger-line-weight',
+            'hamburgerLineGap': '--hamburger-line-gap'
+        };
+
+        const cssVar = cssVarMap[inputId];
+        if (cssVar) {
+            document.documentElement.style.setProperty(cssVar, value);
+            console.log(`Updated CSS variable: ${cssVar} = ${value}`);
+        } else {
+            console.log(`No CSS variable mapping found for: ${inputId}`);
+        }
     }
 
     updateBubbleIconColor(iconType, property, value) {
@@ -12473,6 +13785,11 @@ class SteamLibraryUI {
 
     updateIconRange(id, value) {
         const theme = this.getCurrentTheme();
+        
+        // Yükleme sırasında bildirim gösterme
+        if (!this.isLoadingSettings) {
+            this.isRealTimeUpdate = true;
+        }
         
         const rangeMap = {
             'titleIconSize': '--title-icon-size',
@@ -13045,7 +14362,8 @@ class SteamLibraryUI {
         
         this.refreshHoverStyles();
         
-        this.updateConfig({ themePreset: name, customTheme: preset });
+        // Tüm güncellemeleri tek seferde kaydet (config bozulmasını önlemek için)
+        this.savePresetAndIconSettings(name, preset);
         
         this.showNotification('success', 'Tema uygulandı: ' + name, 'success');
     }
@@ -13101,53 +14419,134 @@ class SteamLibraryUI {
     }
 
     updateIconDesignerFromPreset(preset) {
-        const iconInputs = {
-            'bubbleHomeIconColor': '--bubble-home-icon-color',
-            'bubbleHomeIconBg': '--bubble-home-icon-bg',
-            'bubbleHomeIconHoverColor': '--bubble-home-icon-hover-color',
-            'bubbleHomeIconHoverBg': '--bubble-home-icon-hover-bg',
-            'bubbleHomeIconGlow': '--bubble-home-icon-glow',
-            'bubbleRepairFixIconColor': '--bubble-repairfix-icon-color',
-            'bubbleRepairFixIconBg': '--bubble-repairfix-icon-bg',
-            'bubbleRepairFixIconHoverColor': '--bubble-repairfix-icon-hover-color',
-            'bubbleRepairFixIconHoverBg': '--bubble-repairfix-icon-hover-bg',
-            'bubbleRepairFixIconGlow': '--bubble-repairfix-icon-glow',
-            'bubbleBypassIconColor': '--bubble-bypass-icon-color',
-            'bubbleBypassIconBg': '--bubble-bypass-icon-bg',
-            'bubbleBypassIconHoverColor': '--bubble-bypass-icon-hover-color',
-            'bubbleBypassIconHoverBg': '--bubble-bypass-icon-hover-bg',
-            'bubbleBypassIconGlow': '--bubble-bypass-icon-glow',
-            'bubbleLibraryIconColor': '--bubble-library-icon-color',
-            'bubbleLibraryIconBg': '--bubble-library-icon-bg',
-            'bubbleLibraryIconHoverColor': '--bubble-library-icon-hover-color',
-            'bubbleLibraryIconHoverBg': '--bubble-library-icon-hover-bg',
-            'bubbleLibraryIconGlow': '--bubble-library-icon-glow',
-            'bubbleManualInstallIconColor': '--bubble-manualinstall-icon-color',
-            'bubbleManualInstallIconBg': '--bubble-manualinstall-icon-bg',
-            'bubbleManualInstallIconHoverColor': '--bubble-manualinstall-icon-hover-color',
-            'bubbleManualInstallIconHoverBg': '--bubble-manualinstall-icon-hover-bg',
-            'bubbleManualInstallIconGlow': '--bubble-manualinstall-icon-glow',
-            'bubbleSettingsIconColor': '--bubble-settings-icon-color',
-            'bubbleSettingsIconBg': '--bubble-settings-icon-bg',
-            'bubbleSettingsIconHoverColor': '--bubble-settings-icon-hover-color',
-            'bubbleSettingsIconHoverBg': '--bubble-settings-icon-hover-bg',
-            'bubbleSettingsIconGlow': '--bubble-settings-icon-glow',
-            'hamburgerColor': '--hamburger-color',
-            'hamburgerHoverColor': '--hamburger-hover-color',
-            'hamburgerHoverBg': '--hamburger-hover-bg'
-        };
+        // Tema renklerine uygun ikon ayarları oluştur
+        const themeIconSettings = this.generateThemeIconSettings(preset);
         
-        Object.entries(iconInputs).forEach(([inputId, cssVar]) => {
+        // Bildirim göstermemek için flag set et
+        this.isLoadingSettings = true;
+        
+        // Input değerlerini tema renklerine göre güncelle
+        Object.entries(themeIconSettings).forEach(([inputId, value]) => {
             const input = document.getElementById(inputId);
-            if (input && preset[cssVar]) {
-                input.value = this.toHexColor(preset[cssVar]);
-                input.dispatchEvent(new Event('change'));
+            if (input) {
+                input.value = value;
+                // CSS değişkenlerini doğrudan güncelle
+                this.updateIconSettingsDirectly(inputId, value);
             }
         });
+        
+        // Flag'i sıfırla
+        this.isLoadingSettings = false;
         
         setTimeout(() => {
             this.refreshHoverStyles();
         }, 100);
+    }
+
+    generateThemeIconSettings(preset) {
+        // Tema renklerine uygun ikon ayarları oluştur
+        const accentColor = preset['--accent-primary'] || '#00d4ff';
+        const textColor = preset['--text-secondary'] || '#a1a1aa';
+        const bgColor = preset['--bubble-icon-bg'] || 'rgba(26, 26, 26, 0.95)';
+        const hoverBg = preset['--bubble-icon-hover-bg'] || 'rgba(0, 212, 255, 0.15)';
+        const hoverColor = preset['--bubble-icon-hover-color'] || '#ffffff';
+        
+        return {
+            // Home ikonu - tema ana rengi
+            'bubbleHomeIconColor': this.toHexColor(textColor),
+            'bubbleHomeIconBg': this.toHexColor(bgColor),
+            'bubbleHomeIconHoverColor': this.toHexColor(hoverColor),
+            'bubbleHomeIconHoverBg': this.toHexColor(accentColor),
+            'bubbleHomeIconGlow': this.toHexColor(accentColor),
+            
+            // RepairFix ikonu - kırmızı ton
+            'bubbleRepairFixIconColor': this.toHexColor(textColor),
+            'bubbleRepairFixIconBg': this.toHexColor(bgColor),
+            'bubbleRepairFixIconHoverColor': this.toHexColor(hoverColor),
+            'bubbleRepairFixIconHoverBg': this.toHexColor('#ff6b6b'),
+            'bubbleRepairFixIconGlow': this.toHexColor('#ff6b6b'),
+            
+            // Bypass ikonu - altın ton
+            'bubbleBypassIconColor': this.toHexColor(textColor),
+            'bubbleBypassIconBg': this.toHexColor(bgColor),
+            'bubbleBypassIconHoverColor': this.toHexColor(hoverColor),
+            'bubbleBypassIconHoverBg': this.toHexColor('#ffd700'),
+            'bubbleBypassIconGlow': this.toHexColor('#ffd700'),
+            
+            // Library ikonu - turkuaz ton
+            'bubbleLibraryIconColor': this.toHexColor(textColor),
+            'bubbleLibraryIconBg': this.toHexColor(bgColor),
+            'bubbleLibraryIconHoverColor': this.toHexColor(hoverColor),
+            'bubbleLibraryIconHoverBg': this.toHexColor('#4ecdc4'),
+            'bubbleLibraryIconGlow': this.toHexColor('#4ecdc4'),
+            
+            // ManualInstall ikonu - turuncu ton
+            'bubbleManualInstallIconColor': this.toHexColor(textColor),
+            'bubbleManualInstallIconBg': this.toHexColor(bgColor),
+            'bubbleManualInstallIconHoverColor': this.toHexColor(hoverColor),
+            'bubbleManualInstallIconHoverBg': this.toHexColor('#ffa726'),
+            'bubbleManualInstallIconGlow': this.toHexColor('#ffa726'),
+            
+            // Settings ikonu - mor ton
+            'bubbleSettingsIconColor': this.toHexColor(textColor),
+            'bubbleSettingsIconBg': this.toHexColor(bgColor),
+            'bubbleSettingsIconHoverColor': this.toHexColor(hoverColor),
+            'bubbleSettingsIconHoverBg': this.toHexColor('#ab47bc'),
+            'bubbleSettingsIconGlow': this.toHexColor('#ab47bc'),
+            
+            // Denuvo ikonu - tema ana rengi
+            'bubbleDenuvoIconColor': this.toHexColor(textColor),
+            'bubbleDenuvoIconBg': this.toHexColor(bgColor),
+            'bubbleDenuvoIconHoverColor': this.toHexColor(hoverColor),
+            'bubbleDenuvoIconHoverBg': this.toHexColor(accentColor),
+            'bubbleDenuvoIconGlow': this.toHexColor(accentColor),
+            
+            // Hamburger menü - varsayılan değerler
+            'hamburgerColor': this.toHexColor(textColor),
+            'hamburgerBg': this.toHexColor(bgColor),
+            'hamburgerHoverColor': this.toHexColor(hoverColor),
+            'hamburgerHoverBg': this.toHexColor(hoverBg),
+            'hamburgerLineWeight': '2',
+            'hamburgerLineGap': '3'
+        };
+    }
+
+    saveIconSettingsFromPreset(preset) {
+        try {
+            // Tema renklerine uygun ikon ayarları oluştur
+            const themeIconSettings = this.generateThemeIconSettings(preset);
+            
+            // İkon ayarlarını config'e kaydet
+            this.config.iconSettings = themeIconSettings;
+            this.updateConfig({ iconSettings: themeIconSettings });
+            
+            console.log('Icon settings saved from theme preset:', themeIconSettings);
+        } catch (error) {
+            console.error('İkon ayarları tema preset\'inden kaydetme hatası:', error);
+        }
+    }
+
+    async savePresetAndIconSettings(name, preset) {
+        try {
+            // Tema renklerine uygun ikon ayarları oluştur
+            const themeIconSettings = this.generateThemeIconSettings(preset);
+            
+            // Hamburger menü ayarları artık generateThemeIconSettings içinde
+            
+            // Tüm güncellemeleri tek seferde kaydet
+            const updates = {
+                themePreset: name,
+                customTheme: preset,
+                iconSettings: themeIconSettings
+            };
+            
+            // Config'i güncelle
+            this.config = await ipcRenderer.invoke('save-config', updates);
+            
+            console.log('Preset and icon settings saved together (hamburger preserved):', updates);
+        } catch (error) {
+            console.error('Preset ve ikon ayarları kaydetme hatası:', error);
+        }
     }
 
     saveCurrentTheme() {
@@ -13314,7 +14713,12 @@ class SteamLibraryUI {
             }
         } catch (error) {
             console.error('Failed to add game:', error);
-            this.showNotification('error', 'Oyun kütüphaneye eklenemedi', 'error');
+            
+            if (error.message && error.message.includes('API_TIMEOUT_ERROR')) {
+                this.showNotification('error', 'Sunucu yanıt vermiyor. Lütfen daha sonra tekrar deneyin.', 'error');
+            } else {
+                this.showNotification('error', 'Oyun kütüphaneye eklenemedi', 'error');
+            }
         } finally {
             this.hideLoading();
         }
@@ -14515,6 +15919,11 @@ window.addEventListener('DOMContentLoaded', () => {
   if (oldSelector) oldSelector.remove();
   ui.renderSettingsPage();
   renderAllTexts();
+  
+  // İkon ayarlarını yükle
+  setTimeout(() => {
+    ui.loadIconSettings();
+  }, 1000);
 });
 
 const languageFlagUrls = {
@@ -14549,5 +15958,223 @@ async function safeSteamFetch(url) {
         return await fetch(url);
     }
 }
+
+// Denuvo API İşlemleri
+SteamLibraryUI.prototype.loadDenuvoGames = async function() {
+    try {
+        console.log('🎮 Denuvo oyunları yükleniyor...');
+        this.showLoading();
+
+        const token = await this.getStoredToken();
+        if (!token) {
+            this.hideLoading();
+            this.showNotification('error', this.translate('auth_required'), 'error');
+            return;
+        }
+
+        const response = await fetch('https://api.muhammetdag.com/steamlib/game/denuvo/denuvo.php?action=list', {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('📡 Denuvo API yanıtı:', data);
+
+        if (data.success && data.data) {
+            // Oyunları sakla ve render et
+            this.denuvoGames = data.data;
+            this.renderDenuvoGames(data.data);
+        } else {
+            throw new Error('Invalid API response');
+        }
+
+        this.hideLoading();
+    } catch (error) {
+        console.error('❌ Denuvo oyunları yüklenirken hata:', error);
+        this.hideLoading();
+        this.showNotification('error', this.translate('games_load_error'), 'error');
+    }
+};
+
+SteamLibraryUI.prototype.renderDenuvoGames = function(games) {
+    const container = document.getElementById('denuvoGamesGrid');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    games.forEach(game => {
+        const gameCard = document.createElement('div');
+        gameCard.className = 'denuvo-game-card';
+        gameCard.innerHTML = `
+            <div class="denuvo-game-image">
+                <img src="${game.header_image}" alt="${game.name}" loading="lazy" onerror="this.src='pdbanner.png';">
+            </div>
+            <div class="denuvo-game-info">
+                <h3 class="denuvo-game-title">${game.name}</h3>
+                <div class="denuvo-game-meta">
+                    <span class="denuvo-assigned-user">👤 ${game.assigned_user}</span>
+                    <span class="denuvo-game-id">🆔 ${game.appid}</span>
+                </div>
+            </div>
+            <div class="denuvo-game-actions">
+                <button class="denuvo-activate-btn" data-post="${game.post}" data-name="${game.name}">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 12l2 2 4-4"/>
+                        <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/>
+                    </svg>
+                    <span data-i18n="start_denuvo_activation">Denuvo Aktivasyonuna Başla</span>
+                </button>
+            </div>
+        `;
+
+        // Aktivasyon butonu event listener
+        const activateBtn = gameCard.querySelector('.denuvo-activate-btn');
+        activateBtn.addEventListener('click', () => {
+            this.startDenuvoActivation(game.post, game.name);
+        });
+
+        // Çevirileri uygula
+        this.applyTranslations(gameCard);
+
+        container.appendChild(gameCard);
+    });
+
+    console.log(`✅ ${games.length} Denuvo oyunu yüklendi`);
+};
+
+SteamLibraryUI.prototype.startDenuvoActivation = async function(postId, gameName) {
+    try {
+        console.log(`🔑 ${gameName} için Denuvo aktivasyonu başlatılıyor... (Post ID: ${postId})`);
+        this.showLoading();
+
+        const token = await this.getStoredToken();
+        if (!token) {
+            this.hideLoading();
+            this.showNotification('error', this.translate('auth_required'), 'error');
+            return;
+        }
+
+        const response = await fetch(`https://api.muhammetdag.com/steamlib/game/denuvo/denuvo.php?action=code&post=${postId}`, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('📡 Denuvo kod yanıtı:', data);
+
+        if (data.success && data.data) {
+            this.showDenuvoActivationModal(data.data, gameName);
+        } else {
+            throw new Error('Invalid API response');
+        }
+
+        this.hideLoading();
+    } catch (error) {
+        console.error('❌ Denuvo aktivasyon kodu alınırken hata:', error);
+        this.hideLoading();
+        this.showNotification('error', this.translate('activation_error'), 'error');
+    }
+};
+
+SteamLibraryUI.prototype.showDenuvoActivationModal = function(activationData, gameName) {
+    const modal = document.getElementById('denuvoActivationModal');
+    if (!modal) return;
+
+    // Kod ve URL'yi modal'a yerleştir
+    const codeInput = document.getElementById('denuvoCode');
+    const telegramBtn = document.getElementById('openTelegramBtn');
+    const copyBtn = document.getElementById('copyCodeBtn');
+    const closeBtn = document.getElementById('closeDenuvoBtn');
+
+    if (codeInput) codeInput.value = activationData.code;
+    
+    // Event listener'ları temizle ve yeniden ekle
+    const newTelegramBtn = telegramBtn.cloneNode(true);
+    telegramBtn.parentNode.replaceChild(newTelegramBtn, telegramBtn);
+    
+    const newCopyBtn = copyBtn.cloneNode(true);
+    copyBtn.parentNode.replaceChild(newCopyBtn, copyBtn);
+
+    // Telegram butonu
+    newTelegramBtn.addEventListener('click', () => {
+        window.open(activationData.telegram_url, '_blank');
+    });
+
+    // Kopyala butonu
+    newCopyBtn.addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(activationData.code);
+            this.showNotification('success', this.translate('copied_to_clipboard') || 'Kopyalandı!', 'success');
+            
+            // Butonu geçici olarak "Kopyalandı!" yap
+            const originalText = newCopyBtn.innerHTML;
+            newCopyBtn.innerHTML = '<span data-i18n="copied">Kopyalandı!</span>';
+            newCopyBtn.disabled = true;
+            
+            setTimeout(() => {
+                newCopyBtn.innerHTML = originalText;
+                newCopyBtn.disabled = false;
+            }, 2000);
+        } catch (error) {
+            console.error('Kopyalama hatası:', error);
+            this.showNotification('error', this.translate('copy_error') || 'Kopyalama hatası!', 'error');
+        }
+    });
+
+    // Kapat butonu
+    closeBtn.addEventListener('click', () => {
+        modal.style.display = 'none';
+        modal.classList.remove('active');
+    });
+
+    // Modal kapatma (overlay)
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            modal.style.display = 'none';
+            modal.classList.remove('active');
+        }
+    });
+
+    modal.style.display = 'flex';
+    modal.classList.add('active');
+    console.log(`✅ ${gameName} aktivasyon modal'ı açıldı - Kod: ${activationData.code}`);
+};
+
+// Denuvo Arama Fonksiyonu
+SteamLibraryUI.prototype.performDenuvoSearch = async function(query) {
+    if (!this.denuvoGames) {
+        console.log('❌ Denuvo oyunları yüklenmemiş');
+        return;
+    }
+
+    const filteredGames = this.denuvoGames.filter(game => {
+        // Oyun adı ile arama (case-insensitive)
+        const nameMatch = game.name.toLowerCase().includes(query.toLowerCase());
+        
+        // App ID ile arama
+        const appIdMatch = game.appid.toString().includes(query);
+        
+        // Kullanıcı adı ile arama
+        const userMatch = game.assigned_user.toLowerCase().includes(query.toLowerCase());
+        
+        return nameMatch || appIdMatch || userMatch;
+    });
+
+    console.log(`🔍 Denuvo arama: "${query}" - ${filteredGames.length} sonuç bulundu`);
+    this.renderDenuvoGames(filteredGames);
+};
+
 
 

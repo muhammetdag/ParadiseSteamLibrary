@@ -71,43 +71,28 @@ npm run build-win
 npm run build
 ```
 
-## [v2.1.0] - 09/02/2025
+## [v2.1.1] - 05/09/2025
 
-# Paradise Steam Library v2.1.0
+# Paradise Steam Library v2.1.1
 
-## 🖼 Interface Update
-- The design has been completely revamped, resulting in a sleeker and more modern look.
-- A theme change option has been added, and everything has been updated to be customizable.
-- Added notification customization option, updated to be customizable.
+## 💠 Denuvo Activation
+- Thanks to the Denuvo Activation System, you can play games that have Denuvo (Mafia: The Old Country, Black Myth: Wukong vs.) without any problems.
 
-## 🔐 New Auth System
-- Added Discord login.
-- You will be able to log in with the “Game Permission” role you receive from [our Discord server](https://discord.gg/paradisedev).
+<img width="650" height="442" alt="image" src="https://github.com/user-attachments/assets/0de7541a-ea24-48ba-ba4b-3426cf30f049" />
 
-## Automatic Integration
-- You no longer need to manually install hid.dll. 
-- If you have the required role on [Discord](https://discord.gg/paradisedev), you can automatically install it upon login.
+## ♻ Game Update System
+- Issues with some games not launching due to outdated versions
+- Have been resolved with the Game Update system, making them playable without problems.
+- Add the game to your Library and update it to the latest version!
 
-## New Bypass System
-- The role verification system that comes with the new auth system has been activated; you will not be able to access without your Bypass permission.
-- You can play games that require third-party applications such as EA, Ubisoft, and Rockstar without any problems.
-- Bypass has been seamlessly integrated into the application.
-
-## New OnlinePass Update
-- The role verification system that comes with the new auth system has been activated; you will not be able to access without Online permission.
-- Optimized on the Steam side, it only analyzes installed games so you don't hit rate limits and can download accordingly.
-
-## Game List Optimization
-- The game list has been optimized, saving to your cache for faster loading. No lag.
-
-**Now safer, faster!**
+<img width="550" height="350" alt="image" src="https://github.com/user-attachments/assets/ed88da1c-addb-478d-9995-f9152ccb65ce" />
 
 ---
 
-## 🤝 Contribute
+## 🤝 Contributing
 
 ```
-1. Fork the repository
+1. Fork the project
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Commit (`git commit -m ‘Add amazing feature’`)
 4. Push (`git push origin feature/amazing-feature`)
@@ -115,11 +100,15 @@ npm run build
 ```
 
 ## 📄 License
-This project is licensed under the MIT license. See the `LICENSE` file for details.
+
+This project is licensed under the MIT License. See the `LICENSE` file for details.
 
 ## 👨‍💻 Developer
-**Muhammet DAĞ** - Developed for modern Steam library management.
+
+**Muhammet DAG** - Developed for modern Steam library management.
 
 ---
 
-⭐ If you like this project, don't forget to give it a star!
+⭐ If you like this project, don't forget to star it!
+
+Translated with DeepL.com (free version)

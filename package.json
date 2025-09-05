@@ -1,6 +1,6 @@
 {
   "name": "paradise-steam-library",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Paradise Steam Library",
   "main": "src/main.js",
   "scripts": {

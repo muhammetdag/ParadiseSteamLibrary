@@ -150,10 +150,20 @@
                         <span class="tooltiptext" data-i18n="manual_install">Manuel Kurulum</span>
                     </div>
                     <div class="tooltip tooltip-glow">
+                        <button class="bubble-item" id="bubbleDenuvo" data-page="denuvo">
+                            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/>
+                                <path d="M8 12l2 2 4-4"/>
+                                <path d="M16 8h-6v8h6z"/>
+                            </svg>
+                        </button>
+                        <span class="tooltiptext" data-i18n="denuvo_activation">Denuvo Aktivasyonu</span>
+                    </div>
+                    <div class="tooltip tooltip-glow">
                         <button class="bubble-item" id="bubbleSettings" data-page="settings">
                             <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                 <circle cx="12" cy="12" r="3"/>
-                                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06-.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15.4a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 5 8.6a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8.6 5a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 16 5a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19 8.6a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19 15.4z"/>
+                                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06-.06a2 2 0 1 1-2.83-2.83l.06.06A1.65 1.65 0 0 0 5 15.4a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 5 8.6a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8.6 5a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 16 5a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19 8.6a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19 15.4z"/>
                             </svg>
                         </button>
                         <span class="tooltiptext" data-i18n="settings">Ayarlar</span>
@@ -308,6 +318,12 @@
                                     <path d="M3 21v-5h5"/>
                                 </svg>
                             </button>
+                            <button class="batch-update-btn" id="batchUpdateBtn" title="Tüm Oyunları Güncelle" data-i18n-title="batch_update_all">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+                                </svg>
+                                <span data-i18n="batch_update_all">Toplu Güncelle</span>
+                            </button>
                         </div>
                     </div>
                     
@@ -365,7 +381,7 @@
                 <!-- Manual Install Page -->
                 <div class="page" id="manualInstallPage" style="display:none;">
                     <div class="page-header">
-                        <h1>Manuel Kurulum</h1>
+                        <h1 data-i18n="manual_install">Manuel Kurulum</h1>
                     </div>
                     <div class="manual-install-content">
                         <div class="upload-section">
@@ -410,6 +426,18 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Denuvo Activation Page -->
+                        <div class="page" id="denuvoPage" style="display:none;">
+            <div class="page-header">
+                <h1 data-i18n="denuvo_activation">Denuvo Aktivasyonu</h1>
+            </div>
+            <div class="denuvo-content">
+                <div class="denuvo-games-grid" id="denuvoGamesGrid">
+                    <!-- Oyun kartları buraya dinamik olarak eklenecek -->
+                </div>
+            </div>
+        </div>
             </div>
         </div>
     </div>
@@ -584,6 +612,68 @@
                 </div>
                 <div class="modal-actions">
                     <button class="action-btn primary" id="confirmSetupBtn">Devam Et</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Denuvo Activation Modal -->
+    <div class="modal-overlay" id="denuvoActivationModal" style="display:none;">
+        <div class="modal-container denuvo-activation">
+            <div class="modal-header">
+                <h2 data-i18n="denuvo_activation">Denuvo Aktivasyonu</h2>
+            </div>
+            <div class="modal-content">
+                <div class="denuvo-activation-content">
+                    <div class="denuvo-info">
+                        <div class="denuvo-steps">
+                            <h3 data-i18n="how_to_use">Nasıl Kullanılır?</h3>
+                            <ol class="steps-list">
+                                <li data-i18n="step_1">Aşağıdaki aktivasyon kodunu kopyalayın</li>
+                                <li data-i18n="step_2">"Telegram Botunu Aç" butonuna tıklayın</li>
+                                <li data-i18n="step_3">Telegram'da bot'a kodu gönderin</li>
+                                <li data-i18n="step_4">Bot size Steam hesap bilgilerini verecek</li>
+                                <li data-i18n="step_5">O hesap bilgileriyle oyunu 1 kere başlatın</li>
+                                <li data-i18n="step_6">Denuvo tokeni bilgisayarınızda aktif olacak</li>
+                            </ol>
+                        </div>
+                        
+                        <div class="denuvo-warning">
+                            <div class="warning-icon">⚠️</div>
+                            <div class="warning-content">
+                                <h4 data-i18n="important">Önemli Uyarı</h4>
+                                <ul class="warning-list">
+                                    <li data-i18n="warning_1">Her oyun için günlük 5 aktivasyon limiti vardır</li>
+                                    <li data-i18n="warning_2">Bu hesaplar ücretsiz hesap olduğu için limit dolabilir</li>
+                                    <li data-i18n="warning_3">Denuvo hatası alırsanız 24 saat bekleyin</li>
+                                    <li data-i18n="warning_4">Aktivasyon kodu sadece 1 kere kullanılabilir</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="denuvo-code-section">
+                        <div class="code-display">
+                            <label data-i18n="activation_code">Aktivasyon Kodu:</label>
+                            <div class="code-input-group">
+                                <input type="text" id="denuvoCode" readonly value="">
+                                <button class="copy-btn" id="copyCodeBtn" data-i18n="copy">Kopyala</button>
+                            </div>
+                        </div>
+                        
+                        <div class="telegram-section">
+                            <button class="telegram-btn" id="openTelegramBtn">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.2-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
+                                </svg>
+                                <span data-i18n="open_telegram">Telegram Botunu Aç</span>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="modal-actions">
+                        <button class="action-btn secondary" id="closeDenuvoBtn" data-i18n="close">Kapat</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -779,6 +869,40 @@
 
     <!-- Notification Container -->
     <div class="notification-container" id="notificationContainer"></div>
+
+    <!-- Batch Update Confirmation Modal -->
+    <div id="batchUpdateModal" class="modal-overlay">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2 data-i18n="batch_update_confirm_title">Toplu Güncelleme</h2>
+            </div>
+            <div class="modal-content">
+                <div class="batch-update-info">
+                    <div class="info-item">
+                        <div class="info-text">
+                            <span data-i18n="batch_update_games_count">Güncellenecek oyun sayısı:</span>
+                            <strong id="batchUpdateGameCount">0</strong>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-text">
+                            <span data-i18n="batch_update_estimated_time">Tahmini süre:</span>
+                            <strong data-i18n="batch_update_time_estimate">2-5 dakika</strong>
+                        </div>
+                    </div>
+                </div>
+                <div class="batch-update-warning">
+                    <p data-i18n="batch_update_warning">Bu işlem sırasında uygulamayı kapatmayın. İşlem tamamlanana kadar bekleyin.</p>
+                </div>
+                <div class="modal-actions">
+                    <button class="action-btn secondary" id="batchUpdateCancelBtn" data-i18n="cancel">İptal</button>
+                    <button class="action-btn primary" id="batchUpdateConfirmBtn" data-i18n="batch_update_confirm">Güncellemeyi Başlat</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
 
     <div id="settings-page"></div>
 

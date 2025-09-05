@@ -39,6 +39,10 @@ class SteamLibraryManager {
     this.repairFixCache = new Map();
     this.repairFixCacheExpiry = 1800000; // 30 dakika (5x artırıldı)
     
+    // Token cache - bir kere alıp kullan
+    this.cachedToken = null;
+    this.tokenCacheExpiry = 0;
+    
     this.isBatchProcessing = false;
     this.currentBatch = 0;
     this.totalBatches = 0;
@@ -2732,6 +2736,21 @@ class SteamLibraryManager {
       }
     });
 
+    // AppData görsel cache sistemi
+    ipcMain.handle('get-cached-image', async (event, appId) => {
+      return await this.getCachedImage(appId);
+    });
+
+    ipcMain.handle('save-cached-image', async (event, imageData) => {
+      await this.saveCachedImage(imageData);
+      return { success: true };
+    });
+
+    ipcMain.handle('remove-cached-image', async (event, appId) => {
+      await this.removeCachedImage(appId);
+      return { success: true };
+    });
+
     ipcMain.handle('test-zip-extraction', async (event, zipPath, targetDir) => {
       try {
         console.log('=== TESTING ZIP EXTRACTION ===');
@@ -2769,6 +2788,18 @@ class SteamLibraryManager {
         this.mainWindow.webContents.send('update-active-users', count);
       }
       return count;
+    });
+
+    ipcMain.handle('update-game-info', async (event, appId) => {
+      return await this.updateGameInfo(appId);
+    });
+
+    ipcMain.handle('update-multiple-game-info', async (event, appIds) => {
+      return await this.updateMultipleGameInfo(appIds);
+    });
+
+    ipcMain.handle('get-parallel-game-images', async (event, appIds) => {
+      return await this.getParallelGameImages(appIds);
     });
 
 
@@ -3269,7 +3300,8 @@ class SteamLibraryManager {
         
         const checkResponse = await axios.get(checkUrl, { 
           headers,
-          timeout: 10000 
+          timeout: 30000, // 30 saniye
+          maxRedirects: 5
         });
         console.log('Main: Oyun mevcut, status:', checkResponse.status);
         
@@ -3286,7 +3318,11 @@ class SteamLibraryManager {
       const response = await axios.get(gameUrl, { 
         headers,
         responseType: 'stream',
-        timeout: 30000
+        timeout: 120000, // 2 dakika timeout
+        maxRedirects: 5,
+        validateStatus: function (status) {
+          return status >= 200 && status < 300; // 2xx status kodları kabul et
+        }
       });
       
       console.log('Main: API yanıtı alındı, status:', response.status);
@@ -3379,6 +3415,11 @@ class SteamLibraryManager {
       if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
         console.log('Main: API bağlantı hatası');
         throw new Error('API_CONNECTION_ERROR');
+      }
+      
+      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        console.log('Main: API timeout hatası - sunucu yanıt vermiyor');
+        throw new Error('API_TIMEOUT_ERROR');
       }
       
       throw error;
@@ -4057,92 +4098,20 @@ class SteamLibraryManager {
 
   async extractZipFile(zipPath, targetDir) {
     return new Promise(async (resolve, reject) => {
-      console.log('🔧 Extracting ZIP archive:', zipPath);
+      console.log('🔧 Extracting ZIP archive with WinRAR only:', zipPath);
       console.log('🎯 Target directory:', targetDir);
       
       try {
         await fs.ensureDir(targetDir);
         console.log('✅ Target directory created/verified:', targetDir);
         
-        try {
-          console.log('🔄 Trying AdmZip extraction...');
-          const AdmZip = require('adm-zip');
-          
-          if (!fs.existsSync(zipPath)) {
-            throw new Error('ZIP dosyası bulunamadı');
-          }
-          
-          const zip = new AdmZip(zipPath);
-          
-          const zipEntries = zip.getEntries();
-          if (zipEntries.length === 0) {
-            throw new Error('ZIP dosyası boş');
-          }
-          
-          console.log(`📁 ZIP içeriği: ${zipEntries.length} dosya/dizin`);
-          
-          zip.extractAllTo(targetDir, true);
-          console.log('✅ AdmZip extraction successful');
-          resolve();
-          return;
-        } catch (admZipError) {
-          console.log('❌ AdmZip failed:', admZipError.message);
-          console.log('🔍 AdmZip error details:', {
-            message: admZipError.message,
-            stack: admZipError.stack,
-            zipPath,
-            targetDir
-          });
-        }
-        
-        try {
-          console.log('🔄 Trying 7-Zip extraction...');
-          
-          try {
-            await new Promise((resolveCheck, rejectCheck) => {
-              exec('7z', (error, stdout, stderr) => {
-                if (error && error.code !== 0) {
-                  rejectCheck(new Error('7-Zip bulunamadı'));
-                } else {
-                  resolveCheck();
-                }
-              });
-            });
-          } catch (checkError) {
-            console.log('⚠️ 7-Zip bulunamadı, atlanıyor...');
-            throw new Error('7-Zip bulunamadı');
-          }
-          
-          const command = `7z x "${zipPath}" -o"${targetDir}" -y`;
-          console.log('📝 7-Zip command:', command);
-          
-          await new Promise((resolve7z, reject7z) => {
-          exec(command, (error, stdout, stderr) => {
-            if (error) {
-                console.log('❌ 7-Zip failed:', error.message);
-                console.log('📝 7-Zip stderr:', stderr);
-                console.log('📝 7-Zip stdout:', stdout);
-                reject7z(error);
-              } else {
-                console.log('✅ 7-Zip extraction successful');
-                console.log('📝 7-Zip output:', stdout);
-                resolve7z();
-              }
-            });
-          });
-          
-          resolve();
-          return;
-        } catch (error) {
-          console.log('❌ 7-Zip extraction failed:', error.message);
-        }
-        
+        // Sadece WinRAR kullan
         try {
           console.log('🔄 Trying WinRAR extraction...');
           
           const winrarPath = 'C:\\Program Files\\WinRAR\\WinRAR.exe';
           if (!fs.existsSync(winrarPath)) {
-            console.log('⚠️ WinRAR bulunamadı, atlanıyor...');
+            console.log('⚠️ WinRAR bulunamadı, x86 versiyonu deneniyor...');
             throw new Error('WinRAR bulunamadı');
           }
           
@@ -4197,7 +4166,7 @@ class SteamLibraryManager {
             });
           });
           
-                              resolve();
+          resolve();
           return;
         } catch (error) {
           console.log('❌ WinRAR (x86) extraction failed:', error.message);
@@ -4854,6 +4823,717 @@ class SteamLibraryManager {
       console.error('❌ Hata logu kaydedilemedi:', error.message);
     }
   }
+
+  // Token'ı cache'leyen fonksiyon
+  async getCachedToken() {
+    if (this.cachedToken && Date.now() < this.tokenCacheExpiry) {
+      return this.cachedToken;
+    }
+    
+    const token = await this.getStoredToken();
+    if (token) {
+      this.cachedToken = token;
+      this.tokenCacheExpiry = Date.now() + 300000; // 5 dakika cache
+    }
+    return token;
+  }
+
+  async updateGameInfo(appId) {
+    try {
+      console.log(`📋 API ile oyun bilgileri güncelleniyor: ${appId}`);
+      
+      // Token al (cache'den)
+      const token = await this.getCachedToken();
+      if (!token) {
+        throw new Error('JWT token bulunamadı');
+      }
+
+      // API'den manifest bilgilerini çek
+      const apiUrl = `https://api.muhammetdag.com/steamlib/game/steam/api.php?appid=${appId}`;
+      console.log(`📋 Oyun bilgileri alınıyor...`);
+      
+      const response = await axios.get(apiUrl, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'User-Agent': 'Paradise-Steam-Library/1.0'
+        },
+        timeout: 30000 // 30 saniye timeout
+      });
+
+      if (!response.data || !response.data.success) {
+        throw new Error('API yanıtı başarısız');
+      }
+
+      const resultsData = response.data.results || {};
+      const gameData = resultsData[appId];
+      
+      if (!gameData || !gameData.success) {
+        throw new Error(`AppID ${appId} için veri bulunamadı`);
+      }
+      
+      const manifestArray = gameData.manifests || [];
+      console.log(`✅ Oyun bilgileri alındı: AppID ${appId} (${manifestArray.length} manifest)`);
+      
+      // Array'i object'e çevir (updateLuaManifests fonksiyonu için)
+      const manifestData = {};
+      for (const manifest of manifestArray) {
+        if (manifest.manifest_id && manifest.gid) {
+          manifestData[manifest.manifest_id] = {
+            gid: manifest.gid
+          };
+          console.log(`${manifest.manifest_id} -> ${manifest.gid}`);
+        }
+      }
+      
+      // Lua dosyasını güncelle
+      const luaUpdateResult = await this.updateLuaManifests(appId, manifestData);
+      
+      return {
+        success: true,
+        data: {
+          appId: appId,
+          depots: manifestData,
+          luaUpdated: luaUpdateResult.success,
+          luaUpdateCount: luaUpdateResult.updatedCount || 0,
+          alreadyUpToDateCount: luaUpdateResult.alreadyUpToDateCount || 0
+        }
+      };
+      
+    } catch (error) {
+      console.error('❌ updateGameInfo hatası:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+
+
+
+
+
+
+  async updateMultipleGameInfo(appIds) {
+    try {
+      console.log(`📋 Toplu API ile oyun bilgileri güncelleniyor: ${appIds.length} oyun`);
+      
+      // Token al (cache'den)
+      const token = await this.getCachedToken();
+      if (!token) {
+        throw new Error('JWT token bulunamadı');
+      }
+
+      // Tüm appId'leri virgülle ayırarak tek istekte gönder
+      const appIdsString = appIds.join(',');
+      const apiUrl = `https://api.muhammetdag.com/steamlib/game/steam/api.php?appid=${appIdsString}`;
+      console.log(`📋 Toplu oyun bilgileri alınıyor... (${appIds.length} oyun)`);
+      
+      const response = await axios.get(apiUrl, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'User-Agent': 'Paradise-Steam-Library/1.0'
+        },
+        timeout: 60000 // 60 saniye timeout (toplu istek için daha uzun)
+      });
+
+      if (!response.data || !response.data.success) {
+        throw new Error('API yanıtı başarısız');
+      }
+
+      const resultsData = response.data.results || {};
+      console.log(`✅ Toplu oyun bilgileri alındı: ${Object.keys(resultsData).length} oyun`);
+      
+      // Her oyun için manifest verilerini işle
+      const results = {};
+      let totalUpdated = 0;
+      let totalAlreadyUpToDate = 0;
+
+      for (const appId of appIds) {
+        const gameData = resultsData[appId];
+        
+        if (!gameData || !gameData.success) {
+          console.log(`⚠️ AppID ${appId} için veri bulunamadı veya başarısız`);
+          results[appId] = {
+            success: false,
+            depots: {},
+            luaUpdated: false,
+            luaUpdateCount: 0,
+            alreadyUpToDateCount: 0
+          };
+          continue;
+        }
+
+        const manifests = gameData.manifests || [];
+        console.log(`📋 AppID ${appId} için ${manifests.length} manifest bulundu`);
+        
+        // Array'i object'e çevir (updateLuaManifests fonksiyonu için)
+        const manifestData = {};
+        for (const manifest of manifests) {
+          if (manifest.manifest_id && manifest.gid) {
+            manifestData[manifest.manifest_id] = {
+              gid: manifest.gid
+            };
+            console.log(`${manifest.manifest_id} -> ${manifest.gid}`);
+          }
+        }
+        
+        // Lua dosyasını güncelle
+        const luaUpdateResult = await this.updateLuaManifests(appId, manifestData);
+        
+        results[appId] = {
+          success: true,
+          depots: manifestData,
+          luaUpdated: luaUpdateResult.success,
+          luaUpdateCount: luaUpdateResult.updatedCount || 0,
+          alreadyUpToDateCount: luaUpdateResult.alreadyUpToDateCount || 0
+        };
+
+        totalUpdated += luaUpdateResult.updatedCount || 0;
+        totalAlreadyUpToDate += luaUpdateResult.alreadyUpToDateCount || 0;
+      }
+
+      return {
+        success: true,
+        data: {
+          requestedAppIds: appIds,
+          totalGames: Object.keys(resultsData).length,
+          results: results,
+          totalUpdated: totalUpdated,
+          totalAlreadyUpToDate: totalAlreadyUpToDate
+        }
+      };
+      
+    } catch (error) {
+      console.error('❌ updateMultipleGameInfo hatası:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  async getParallelGameImages(appIds) {
+    try {
+      // Cache'den kontrol et ve sadece gereken oyunları al
+      const cacheResults = await this.getCachedGameImages(appIds);
+      const needToFetch = appIds.filter(appId => !cacheResults[appId]);
+      
+      let apiResults = {};
+      if (needToFetch.length > 0) {
+        // Token al (cache'den)
+        const token = await this.getCachedToken();
+        if (!token) {
+          throw new Error('JWT token bulunamadı');
+        }
+
+        // Sadece gereken oyunlar için API isteği yap
+        const imagePromises = needToFetch.map(async (appId) => {
+          try {
+            const apiUrl = `https://api.muhammetdag.com/steamlib/game/steam/api.php?appid=${appId}`;
+            
+            const response = await axios.get(apiUrl, {
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'User-Agent': 'Paradise-Steam-Library/1.0'
+              },
+              timeout: 3000 // 3 saniye timeout (daha hızlı)
+            });
+
+            if (response.data && response.data.success && response.data.header_image) {
+              return {
+                appId: appId,
+                success: true,
+                header_image: response.data.header_image,
+                name: response.data.name || `Oyun ${appId}`
+              };
+            } else {
+              // Fallback: Steam CDN'den direkt al
+              return {
+                appId: appId,
+                success: true,
+                header_image: `https://cdn.steamstatic.com/steam/apps/${appId}/header.jpg`,
+                name: response.data?.name || `Oyun ${appId}`
+              };
+            }
+          } catch (error) {
+            // Fallback: Steam CDN'den direkt al
+            return {
+              appId: appId,
+              success: true,
+              header_image: `https://cdn.steamstatic.com/steam/apps/${appId}/header.jpg`,
+              name: `Oyun ${appId}`
+            };
+          }
+        });
+
+        // Tüm istekleri paralel olarak bekle
+        const results = await Promise.all(imagePromises);
+
+        // API sonuçlarını cache'e kaydet
+        for (const result of results) {
+          apiResults[result.appId] = {
+            success: result.success,
+            header_image: result.header_image,
+            name: result.name
+          };
+        }
+        
+        // Yeni resimleri cache'e kaydet
+        await this.saveCachedGameImages(apiResults);
+      }
+
+      // Cache ve API sonuçlarını birleştir
+      const finalResults = { ...cacheResults, ...apiResults };
+
+      return {
+        success: true,
+        data: {
+          requestedAppIds: appIds,
+          results: finalResults,
+          totalGames: appIds.length,
+          fromCache: appIds.length - needToFetch.length,
+          fromAPI: needToFetch.length
+        }
+      };
+      
+    } catch (error) {
+      console.error('❌ getParallelGameImages hatası:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  async getCachedGameImages(appIds) {
+    try {
+      const cacheFile = path.join(this.appDataPath, 'game-images-cache.json');
+      
+      if (!await fs.pathExists(cacheFile)) {
+        return {};
+      }
+
+      const cacheData = await fs.readJson(cacheFile);
+      const results = {};
+      const now = Date.now();
+      const oneDayInMs = 24 * 60 * 60 * 1000; // 1 gün
+
+      for (const appId of appIds) {
+        if (cacheData[appId] && cacheData[appId].timestamp) {
+          const cacheAge = now - cacheData[appId].timestamp;
+          
+          if (cacheAge < oneDayInMs) {
+            results[appId] = {
+              success: true,
+              header_image: cacheData[appId].header_image,
+              name: cacheData[appId].name || `Oyun ${appId}`
+            };
+          }
+        }
+      }
+
+      return results;
+    } catch (error) {
+      return {};
+    }
+  }
+
+  async saveCachedGameImages(imageData) {
+    try {
+      const cacheFile = path.join(this.appDataPath, 'game-images-cache.json');
+      
+      let cacheData = {};
+
+      // Mevcut cache'i oku
+      if (await fs.pathExists(cacheFile)) {
+        cacheData = await fs.readJson(cacheFile);
+      }
+
+      // Yeni verileri ekle
+      const now = Date.now();
+      for (const [appId, data] of Object.entries(imageData)) {
+        cacheData[appId] = {
+          header_image: data.header_image,
+          name: data.name,
+          timestamp: now
+        };
+      }
+
+      // Cache'i kaydet (daha hızlı için spaces: 0)
+      await fs.writeJson(cacheFile, cacheData, { spaces: 0 });
+
+      // Cache boyutunu kontrol et ve temizle (asenkron olarak)
+      setImmediate(() => this.cleanupImageCache(cacheData));
+      
+    } catch (error) {
+      // Sessizce hata yok say
+    }
+  }
+
+  async cleanupImageCache(cacheData) {
+    try {
+      const now = Date.now();
+      const oneDayInMs = 24 * 60 * 60 * 1000;
+      const maxCacheSize = 300; // Maksimum 300 oyun cache'de tut
+
+      // Eski cache'leri temizle
+      const validCache = {};
+      
+      for (const [appId, data] of Object.entries(cacheData)) {
+        if (data.timestamp && (now - data.timestamp) < oneDayInMs) {
+          validCache[appId] = data;
+        }
+      }
+
+      // Cache boyutu çok büyükse en eski olanları sil
+      const cacheEntries = Object.entries(validCache);
+      if (cacheEntries.length > maxCacheSize) {
+        // Timestamp'e göre sırala ve en eski olanları sil
+        cacheEntries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+        const toKeep = cacheEntries.slice(-maxCacheSize);
+        
+        const cleanedCache = {};
+        toKeep.forEach(([appId, data]) => {
+          cleanedCache[appId] = data;
+        });
+
+        const cacheFile = path.join(this.appDataPath, 'game-images-cache.json');
+        await fs.writeJson(cacheFile, cleanedCache, { spaces: 0 }); // Daha hızlı kaydetme
+        
+      }
+    } catch (error) {
+      // Sessizce hata yok say
+    }
+  }
+
+  // AppData görsel cache sistemi
+  async getCachedImage(appId) {
+    try {
+      const cacheDir = path.join(this.appDataPath, 'cache');
+      const cacheFile = path.join(cacheDir, `${appId}.json`);
+      
+      // Cache klasörünü oluştur
+      if (!await fs.pathExists(cacheDir)) {
+        await fs.ensureDir(cacheDir);
+      }
+      
+      if (await fs.pathExists(cacheFile)) {
+        try {
+          // Dosya boyutunu kontrol et
+          const stats = await fs.stat(cacheFile);
+          if (stats.size === 0) {
+            console.log(`⚠️ Main.js: Boş cache dosyası tespit edildi: ${appId}`);
+            await fs.remove(cacheFile);
+            return { success: false };
+          }
+          
+          const imageData = await fs.readJson(cacheFile);
+          
+          // JSON yapısını kontrol et
+          if (typeof imageData !== 'object' || imageData === null || !imageData.url || !imageData.timestamp) {
+            console.log(`⚠️ Main.js: Geçersiz JSON yapısı tespit edildi: ${appId}`);
+            await fs.remove(cacheFile);
+            return { success: false };
+          }
+          
+          const now = Date.now();
+          const oneHourInMs = 60 * 60 * 1000; // 1 saat
+          
+          if (now - imageData.timestamp < oneHourInMs) {
+            console.log(`✅ Main.js: Cache'den görsel bulundu: ${appId}`);
+            return { 
+              success: true, 
+              url: imageData.url, 
+              timestamp: imageData.timestamp 
+            };
+          } else {
+            // Eski cache'i sil
+            await fs.remove(cacheFile);
+            console.log(`🗑️ Main.js: Eski cache silindi: ${appId}`);
+          }
+        } catch (jsonError) {
+          console.log(`❌ Main.js: JSON parse hatası (${jsonError.message}), bozuk cache dosyası temizleniyor: ${appId}`);
+          // Bozuk JSON dosyasını sil
+          try {
+            await fs.remove(cacheFile);
+            console.log(`🗑️ Main.js: Bozuk cache dosyası silindi: ${cacheFile}`);
+          } catch (removeError) {
+            console.log(`❌ Main.js: Bozuk cache dosyası silinemedi:`, removeError);
+          }
+        }
+      } else {
+        console.log(`❌ Main.js: Cache dosyası bulunamadı: ${appId}`);
+      }
+      
+      return { success: false };
+    } catch (error) {
+      console.log(`❌ Main.js: Cache okuma hatası (${appId}):`, error);
+      return { success: false };
+    }
+  }
+
+  async saveCachedImage(imageData) {
+    try {
+      const cacheDir = path.join(this.appDataPath, 'cache');
+      const cacheFile = path.join(cacheDir, `${imageData.appId}.json`);
+      
+      // Cache klasörünü oluştur
+      if (!await fs.pathExists(cacheDir)) {
+        await fs.ensureDir(cacheDir);
+      }
+      
+      // Cache verisini hazırla
+      const cacheData = {
+        url: imageData.url,
+        timestamp: imageData.timestamp
+      };
+      
+      // Doğrudan dosyaya yaz (eşzamanlı yazma sorunu yok)
+      try {
+        await fs.writeJson(cacheFile, cacheData, { spaces: 0 });
+        console.log(`✅ Main.js: Cache başarıyla kaydedildi: ${imageData.appId}`);
+      } catch (writeError) {
+        console.log(`❌ Main.js: Cache yazma hatası (${imageData.appId}):`, writeError);
+        // Hatalı dosyayı temizle
+        try {
+          if (await fs.pathExists(cacheFile)) {
+            await fs.remove(cacheFile);
+          }
+        } catch (removeError) {
+          console.log(`❌ Main.js: Hatalı cache dosyası temizlenemedi:`, removeError);
+        }
+      }
+      
+      // Cache temizleme (asenkron)
+      this.cleanupImageCacheAsync();
+      
+    } catch (error) {
+      console.log(`❌ Main.js: Cache kaydetme hatası (${imageData.appId}):`, error);
+    }
+  }
+
+  async removeCachedImage(appId) {
+    try {
+      const cacheDir = path.join(this.appDataPath, 'cache');
+      const cacheFile = path.join(cacheDir, `${appId}.json`);
+      
+      // Cache klasörünü oluştur
+      if (!await fs.pathExists(cacheDir)) {
+        await fs.ensureDir(cacheDir);
+      }
+      
+      if (await fs.pathExists(cacheFile)) {
+        try {
+          await fs.remove(cacheFile);
+          console.log(`🗑️ Main.js: Cache dosyası silindi: ${appId}`);
+        } catch (removeError) {
+          console.log(`❌ Main.js: Cache dosyası silinemedi (${appId}):`, removeError);
+        }
+      } else {
+        console.log(`❌ Main.js: Cache dosyası bulunamadı: ${appId}`);
+      }
+    } catch (error) {
+      console.log(`❌ Main.js: Cache silme hatası (${appId}):`, error);
+    }
+  }
+
+  async cleanupImageCacheAsync() {
+    try {
+      const cacheDir = path.join(this.appDataPath, 'cache');
+      const now = Date.now();
+      const oneHourInMs = 60 * 60 * 1000; // 1 saat
+      const maxCacheSize = 500; // Maksimum 500 görsel cache'de tut
+
+      // Cache klasörünü kontrol et
+      if (!await fs.pathExists(cacheDir)) {
+        return;
+      }
+
+      // Cache klasöründeki tüm dosyaları oku
+      const files = await fs.readdir(cacheDir);
+      const jsonFiles = files.filter(file => file.endsWith('.json'));
+      
+      if (jsonFiles.length === 0) {
+        return;
+      }
+
+      const validFiles = [];
+      const filesToDelete = [];
+
+      // Her dosyayı kontrol et
+      for (const file of jsonFiles) {
+        const filePath = path.join(cacheDir, file);
+        try {
+          const stats = await fs.stat(filePath);
+          if (stats.size === 0) {
+            filesToDelete.push(filePath);
+            continue;
+          }
+
+          const imageData = await fs.readJson(filePath);
+          
+          // JSON yapısını kontrol et
+          if (typeof imageData !== 'object' || imageData === null || !imageData.url || !imageData.timestamp) {
+            filesToDelete.push(filePath);
+            continue;
+          }
+
+          // Süre kontrolü
+          if (now - imageData.timestamp < oneHourInMs) {
+            validFiles.push({
+              file: file,
+              path: filePath,
+              timestamp: imageData.timestamp
+            });
+          } else {
+            filesToDelete.push(filePath);
+          }
+        } catch (error) {
+          // Bozuk dosyaları sil
+          filesToDelete.push(filePath);
+        }
+      }
+
+      // Eski ve bozuk dosyaları sil
+      for (const filePath of filesToDelete) {
+        try {
+          await fs.remove(filePath);
+          console.log(`🗑️ Main.js: Eski/bozuk cache dosyası silindi: ${path.basename(filePath)}`);
+        } catch (removeError) {
+          console.log(`❌ Main.js: Cache dosyası silinemedi: ${path.basename(filePath)}`);
+        }
+      }
+
+      // Cache boyutu çok büyükse en eski olanları sil
+      if (validFiles.length > maxCacheSize) {
+        // Timestamp'e göre sırala ve en eski olanları sil
+        validFiles.sort((a, b) => a.timestamp - b.timestamp);
+        const toDelete = validFiles.slice(0, validFiles.length - maxCacheSize);
+        
+        for (const fileInfo of toDelete) {
+          try {
+            await fs.remove(fileInfo.path);
+            console.log(`🗑️ Main.js: Eski cache dosyası silindi (boyut limiti): ${fileInfo.file}`);
+          } catch (removeError) {
+            console.log(`❌ Main.js: Cache dosyası silinemedi: ${fileInfo.file}`);
+          }
+        }
+      }
+
+      console.log(`✅ Main.js: Cache temizleme tamamlandı: ${validFiles.length - (validFiles.length > maxCacheSize ? validFiles.length - maxCacheSize : 0)} görsel kaldı`);
+      
+    } catch (error) {
+      console.log(`❌ Main.js: Cache temizleme hatası:`, error);
+    }
+  }
+
+  async updateLuaManifests(appId, manifestData) {
+    try {
+      // Steam config klasöründeki stplug-in klasörünü bul
+      const steamPaths = [
+        'C:\\Program Files (x86)\\Steam\\config\\stplug-in',
+        'C:\\Program Files\\Steam\\config\\stplug-in',
+        path.join(process.env.USERPROFILE || '', 'AppData\\Local\\Steam\\config\\stplug-in'),
+        path.join(process.env.APPDATA || '', 'Steam\\config\\stplug-in')
+      ];
+      
+      let stplugInPath = null;
+      for (const steamPath of steamPaths) {
+        if (await fs.pathExists(steamPath)) {
+          stplugInPath = steamPath;
+          break;
+        }
+      }
+      
+      if (!stplugInPath) {
+        console.warn('⚠️ Steam config\\stplug-in klasörü bulunamadı');
+        return { success: false, error: 'Steam config\\stplug-in klasörü bulunamadı' };
+      }
+      
+      console.log(`📁 Oyun dosyaları klasörü bulundu`);
+      const luaFilePath = path.join(stplugInPath, `${appId}.lua`);
+      
+      // Lua dosyası var mı kontrol et
+      if (!await fs.pathExists(luaFilePath)) {
+        console.warn(`⚠️ Lua dosyası bulunamadı: ${luaFilePath}`);
+        return { success: false, error: 'Lua dosyası bulunamadı' };
+      }
+      
+      // Lua dosyasını oku
+      const luaContent = await fs.readFile(luaFilePath, 'utf8');
+      console.log(`📄 Oyun dosyası okundu`);
+      
+      let updatedContent = luaContent;
+      let updateCount = 0;
+      
+      // Her manifest ID için güncelleme yap (sadece mevcut olanları)
+      let alreadyUpToDateCount = 0;
+      for (const [manifestId, data] of Object.entries(manifestData)) {
+        if (data.gid) {
+          // Önce 3 parametreli formatı kontrol et: setManifestid(manifestId, "oldGid", 0)
+          let oldPattern = new RegExp(`setManifestid\\(${manifestId},\\s*"([^"]*)",\\s*\\d+\\)`, 'g');
+          let match = oldPattern.exec(updatedContent);
+          
+          if (match) {
+            const currentGid = match[1];
+            if (currentGid === data.gid) {
+              // Zaten güncel
+              alreadyUpToDateCount++;
+              console.log(`ℹ️ Manifest ${manifestId} zaten güncel: ${data.gid}`);
+            } else {
+              // Güncelle
+              const newValue = `setManifestid(${manifestId}, "${data.gid}", 0)`;
+              updatedContent = updatedContent.replace(oldPattern, newValue);
+              updateCount++;
+              console.log(`✅ Manifest ${manifestId} güncellendi (3 parametre): ${currentGid} -> ${data.gid}`);
+            }
+          } else {
+            // 2 parametreli formatı kontrol et: setManifestid(manifestId, "oldGid")
+            oldPattern = new RegExp(`setManifestid\\(${manifestId},\\s*"([^"]*)"\\)`, 'g');
+            match = oldPattern.exec(updatedContent);
+            
+            if (match) {
+              const currentGid = match[1];
+              if (currentGid === data.gid) {
+                // Zaten güncel
+                alreadyUpToDateCount++;
+                console.log(`ℹ️ Manifest ${manifestId} zaten güncel: ${data.gid}`);
+              } else {
+                // Güncelle
+                const newValue = `setManifestid(${manifestId}, "${data.gid}")`;
+                updatedContent = updatedContent.replace(oldPattern, newValue);
+                updateCount++;
+                console.log(`✅ Manifest ${manifestId} güncellendi (2 parametre): ${currentGid} -> ${data.gid}`);
+              }
+            } else {
+              // Eğer setManifestid yoksa ekleme, sadece log
+              console.log(`ℹ️ Manifest ${manifestId} Lua dosyasında bulunamadı, atlandı`);
+            }
+          }
+        }
+      }
+      
+      // Dosyayı kaydet
+      if (updateCount > 0) {
+        await fs.writeFile(luaFilePath, updatedContent, 'utf8');
+        console.log(`💾 Oyun dosyası güncellendi: ${updateCount} güncelleme yapıldı`);
+        return { success: true, updatedCount: updateCount, alreadyUpToDateCount: alreadyUpToDateCount };
+      } else if (alreadyUpToDateCount > 0) {
+        console.log(`ℹ️ Tüm manifest'ler zaten güncel (${alreadyUpToDateCount} manifest)`);
+        return { success: true, updatedCount: 0, alreadyUpToDateCount: alreadyUpToDateCount };
+      } else {
+        console.log('ℹ️ Güncellenecek manifest bulunamadı');
+        return { success: true, updatedCount: 0, alreadyUpToDateCount: 0 };
+      }
+      
+    } catch (error) {
+      console.error('❌ Lua dosyası güncelleme hatası:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+
 }
 
 app.whenReady().then(async () => {
