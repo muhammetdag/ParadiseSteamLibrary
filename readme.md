@@ -105,7 +105,7 @@ This project is licensed under the MIT License. See the `LICENSE` file for detai
 
 ## 👨‍💻 Developer
 
-**Muhammet DAG** - Developed for modern Steam library management.
+**Muhammet DAG** and **Promaxthecoder** - Developed for modern Steam library management.
 
 ---
 
