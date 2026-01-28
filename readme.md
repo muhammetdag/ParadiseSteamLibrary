@@ -45,7 +45,7 @@ Steam kütüphanenizi yönetmenin en gelişmiş ve en hızlı yolu. Bu araç, ku
 Bu proje şu an için kapalı kaynak olarak yürütülmektedir. Katkıda bulunmak isterseniz şu yolları izleyebilirsiniz:
 
 * **Hata Bildirimi:** Bir sorunla karşılaşırsanız [buraya tıklayarak bir Issue açın](https://github.com/muhammetdag/ParadiseSteamLibrary/issues).
-* **Öneriler:** Yeni fikirlerinizi [Tartışmalar](./discussions) kısmında paylaşabilirsiniz.
+* **Öneriler:** Yeni fikirlerinizi [Discord](discord.gg/paradisedev) sunucumuzda paylaşabilirsiniz.
 * **Takip Etme:** Güncellemelerden haberdar olmak için projeyi "Watch" listesine alabilirsiniz.
 
 ## 📥 İndirme ve Kullanım
