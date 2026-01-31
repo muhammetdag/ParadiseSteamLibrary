@@ -58,7 +58,7 @@ Bu proje **MIT Lisansı** altında lisanslanmıştır. Detaylar için `LICENSE` 
 ---
 
 ## 👨‍💻 Geliştiriciler
-* **Muhammet DAĞ** - [GitHub Profilinize Link]
+* **Muhammet DAĞ** - [muhammetdag.com](https://muhammetdag.com/)
 * **Promax** - [[Whatsapp]](https://wa.me/6285878610241)
 * **Yasin** - [[Whatsapp]](https://wa.me/447478187400)
 ---
