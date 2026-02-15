@@ -96,10 +96,16 @@ Bu proje **MIT Lisansı** altında lisanslanmıştır. Detaylar için `LICENSE` 
 
 ---
 
-## 👨‍💻 Geliştiriciler
-* **Muhammet DAĞ** - https://muhammetdag.com/
-* **Promax**
-* **Yasin**
+## 👨‍💻 Geliştiriciler & İletişim
+
+* **Muhammet DAĞ**  
+  🌐 https://muhammetdag.com/
+
+* **Promax**  
+  📱 WhatsApp: https://wa.me/6285878610241
+
+* **Yasin**  
+  📱 WhatsApp: https://wa.me/447478187400
 
 ---
 
