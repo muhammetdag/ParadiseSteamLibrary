@@ -2,9 +2,7 @@
 
 **Paradise Steam Library**, oyun deneyiminizi bir üst seviyeye taşıyan, modern ve kapsamlı bir oyun yönetim platformudur. Sadece bir kütüphane değil, oyun dünyasının kapılarını sonuna kadar açan hepsi-bir-arada bir çözüm ortağıdır.
 
-<div align="center">
-  <img src="https://media.discordapp.net/attachments/1257354238015574098/1463224188356661506/image.png?ex=69710d37&is=696fbbb7&hm=9738ec606558235e919e48c4ed65e5edee2d20fdc33cf2095246e7449e81dd79&=&format=webp&quality=lossless&width=1607&height=856" alt="Paradise Steam Library Preview" width="100%" />
-</div>
+
 
 # 🚀 Steam Library Manager & Enhancer
 
