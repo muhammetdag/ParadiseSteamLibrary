@@ -1,54 +1,95 @@
-# Paradise Steam Library V3.1.1 🌟
+# Paradise Steam Library V3.3.0 🌟
 
-**Paradise Steam Library**, oyun deneyiminizi bir üst seviyeye taşıyan, modern ve kapsamlı bir oyun yönetim platformudur. Sadece bir kütüphane değil, oyun dünyasının kapılarını sonuna kadar açan hepsi-bir-arada bir çözüm ortağıdır.
+**Paradise Steam Library**, oyun deneyiminizi bir üst seviyeye taşıyan modern ve kapsamlı bir Steam kütüphane yönetim platformudur.  
+Sadece bir kütüphane değil, performans, senkronizasyon ve gelişmiş mağaza altyapısı ile hepsi-bir-arada bir oyun yönetim çözümüdür.
 
-
+---
 
 # 🚀 Steam Library Manager & Enhancer
 
-Steam kütüphanenizi yönetmenin en gelişmiş ve en hızlı yolu. Bu araç, kullanıcı deneyimini bozmadan, yüksek performanslı ve güvenli bir altyapı ile Steam özelliklerini genişletmek için geliştirilmiştir.
+Steam kütüphanenizi yönetmenin en gelişmiş ve en hızlı yolu.  
+Yüksek performanslı ve güvenli altyapısı sayesinde kullanıcı deneyimini bozmadan gelişmiş özellikler sunar.
 
 ---
 
 ## ✨ Öne Çıkan Özellikler
 
-### 🎮 Sınırsız Oyun Erişimi & Yönetimi
-* **Anında Kütüphane Güncelleme:** Steam'i **yeniden başlatmaya gerek kalmadan**, kendi geliştirdiğimiz özel DLL altyapısı ile oyunları kütüphanenize anında ekleyin.
-* **OnlineFix Entegrasyonu:** Popüler oyunlar için dahili multiplayer desteği sayesinde arkadaşlarınızla sorunsuz eşleşin.
-* **Denuvo Offline Sistem:** En yeni AAA oyunlar için Telegram entegreli otomatik hesap ve kod sistemi.
+### ☁️ Steam Cloud Senkronizasyonu
+* Oyun kayıtları artık otomatik olarak buluta kaydedilir.
+* Farklı cihazlarda kaldığınız yerden devam edebilirsiniz.
+* Hesap bazlı kayıt yönetimi sistemi eklendi.
 
-### 🛡️ Güvenli ve Özgün Altyapı
-* **Native DLL Çözümü:** Piyasada dolaşan Çin menşeli veya güvenilmez "injector" yöntemlerini kullanmıyoruz. Proje, tamamen kendi güvenli hook sistemimiz üzerinden çalışır.
-* **Otomatik Bypass Yönetimi:** DRM kısıtlamalarını ve oyun engellerini güvenli bir şekilde aşan gelişmiş araçlar.
-* **Steam Native Haberleşme:** Steam istemcisi ile doğrudan ve uyumlu bir şekilde iletişim kurarak stabiliteyi korur.
+---
 
-### 🎬 Medya & Eğlence Merkezi
-* **Dahili İzleyici:** Uygulamadan çıkmadan vizyondaki filmleri yüksek çözünürlükte izleyin.
-* **Zengin İçerik Kartları:** Her oyun ve film için , sistem gereksinimleri ve detaylı bilgiler.
+### 🛠 Steam Workshop Desteği
+* Atölye içeriklerini doğrudan indirebilme desteği.
+* Mod ve topluluk içeriklerini kolayca yönetebilme.
+* Workshop içerikleri için optimize edilmiş indirme altyapısı.
+
+---
+
+### 🔓 Otomatik Denuvo Entegrasyonu
+* Tek tıkla başlatma sistemi.
+* Uyumlu oyunlar için otomatik entegrasyon.
+* Geliştirilmiş arka plan işlem yönetimi.
+
+---
+
+### 🏪 Geliştirilmiş Mağaza Sistemi
+* Sonsuz kaydırma (Infinite Scroll) altyapısı.
+* Kategori sistemi eklendi.
+* Daha hızlı yükleme ve akıcı gezinme.
+* Optimize edilmiş içerik kartları.
+
+---
+
+### 🎯 Puan & Üyelik Sistemi
+* Tamamen yeni puan sistemi eklendi.
+* Şans oyunları ile puan katlama:
+  * 💣 Mines
+  * 🗼 Towers
+* Kazanılan puanlarla üyelik süreleri alınabilir.
+* Ücretsiz kullanıcılar da puan kazanabilir.
+
+---
+
+### 💎 Ücretlendirme Güncellemesi
+* Uygulama ücretli modele geçmiştir.
+* Ücretsiz kullanıcılar puan sistemi üzerinden avantaj elde edebilir.
+* Üyelik süreleri puan ile kazanılabilir.
 
 ---
 
 ## 🚀 Kurulum ve Kullanım
 
-1.  **Releases** sekmesinden en güncel sürümü indirin.
-2.  Uygulamayı çalıştırın (Yönetici izinleri gerekebilir).
-3.  Steam kütüphanenizi senkronize edin ve dilediğiniz oyunu tek tıkla ekleyin.
+1. **Releases** sekmesinden en güncel sürümü indirin.
+2. Uygulamayı çalıştırın (Yönetici izinleri gerekebilir).
+3. Steam hesabınızı senkronize edin.
+4. Özellikleri aktif ederek kütüphanenizi yönetin.
 
-> **Not:** Programımız kapalı kaynak kodludur. Güvenlik ve stabilite için yalnızca resmi kanallarımız üzerinden paylaşılan dosyaları kullanın.
+> **Not:** Program kapalı kaynak kodludur. Güvenlik ve stabilite için yalnızca resmi kanallar üzerinden paylaşılan dosyaları kullanın.
 
 ---
 
-## 🤝 Katkıda Bulunma
+## 🤝 Katkıda Bulunma & İletişim
 
-Bu proje şu an için kapalı kaynak olarak yürütülmektedir. Katkıda bulunmak isterseniz şu yolları izleyebilirsiniz:
+* **🐞 Hata Bildirimi:**  
+  Bir sorunla karşılaşırsanız [Issue açarak bize bildirin](https://github.com/muhammetdag/ParadiseSteamLibrary/issues).
 
-* **Hata Bildirimi:** Bir sorunla karşılaşırsanız [buraya tıklayarak bir Issue açın](https://github.com/muhammetdag/ParadiseSteamLibrary/issues).
-* **Öneriler:** Yeni fikirlerinizi [Discord](discord.gg/paradisedev) sunucumuzda paylaşabilirsiniz.
-* **Takip Etme:** Güncellemelerden haberdar olmak için projeyi "Watch" listesine alabilirsiniz.
+* **💡 Öneriler & Topluluk:**  
+  Yeni fikirlerinizi ve geri bildirimlerinizi resmi Discord sunucumuzda paylaşabilirsiniz:  
+  👉 https://discord.gg/paradisedev
 
-## 📥 İndirme ve Kullanım
-Programın son halini (exe) indirmek için [Releases](https://github.com/muhammetdag/ParadiseSteamLibrary/releases/tag/v3.1.1) sekmesine gidin.
----paylaş
+* **👀 Takip Edin:**  
+  Güncellemelerden anında haberdar olmak için projeyi **Watch** listesine ekleyebilirsiniz.
+
+---
+
+## 📥 İndirme
+Son sürümü indirmek için:  
+https://github.com/muhammetdag/ParadiseSteamLibrary/releases/tag/v3.3.0
+
+---
 
 ## 📄 Lisans
 Bu proje **MIT Lisansı** altında lisanslanmıştır. Detaylar için `LICENSE` dosyasına göz atabilirsiniz.
@@ -56,9 +97,10 @@ Bu proje **MIT Lisansı** altında lisanslanmıştır. Detaylar için `LICENSE` 
 ---
 
 ## 👨‍💻 Geliştiriciler
-* **Muhammet DAĞ** - [muhammetdag.com](https://muhammetdag.com/)
-* **Promax** - [[Whatsapp]](https://wa.me/6285878610241)
-* **Yasin** - [[Whatsapp]](https://wa.me/447478187400)
+* **Muhammet DAĞ** - https://muhammetdag.com/
+* **Promax**
+* **Yasin**
+
 ---
 
-⭐ **Bu projeyi beğendiyseniz yıldız vermeyi (Star) unutmayın!**
+⭐ Bu projeyi beğendiyseniz yıldız vermeyi (Star) unutmayın!
