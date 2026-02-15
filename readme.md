@@ -102,10 +102,10 @@ Bu proje **MIT Lisansı** altında lisanslanmıştır. Detaylar için `LICENSE` 
   🌐 https://muhammetdag.com/
 
 * **Promax**  
-  📱 WhatsApp: https://wa.me/6285878610241
+  [![WhatsApp](https://img.shields.io/badge/WhatsApp-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://wa.me/6285878610241)
 
 * **Yasin**  
-  📱 WhatsApp: https://wa.me/447478187400
+  [![WhatsApp](https://img.shields.io/badge/WhatsApp-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](https://wa.me/447478187400)
 
 ---
 
