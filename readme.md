@@ -1,4 +1,4 @@
-# Paradise Steam Library V3.3.0 🌟
+# Paradise Steam Library V3.3.1 🌟
 
 **Paradise Steam Library**, oyun deneyiminizi bir üst seviyeye taşıyan modern ve kapsamlı bir Steam kütüphane yönetim platformudur.  
 Sadece bir kütüphane değil, performans, senkronizasyon ve gelişmiş mağaza altyapısı ile hepsi-bir-arada bir oyun yönetim çözümüdür.
@@ -50,6 +50,18 @@ Yüksek performanslı ve güvenli altyapısı sayesinde kullanıcı deneyimini b
   * 🗼 Towers
 * Kazanılan puanlarla üyelik süreleri alınabilir.
 * Ücretsiz kullanıcılar da puan kazanabilir.
+
+---
+
+### 🎁 Davet & Referans Sistemi 
+* Her kullanıcıya özel bir **davet kodu** tanımlanır.
+* Yeni kullanıcı kayıt olurken bu kodu girer.
+* Kod ile kayıt olan kullanıcı, davet eden kişinin referansı olarak sisteme işlenir.
+* Başarılı davet sonrasında:
+  * ✅ **Davet eden kullanıcı +1 gün üyelik süresi kazanır**
+  * ✅ **Davet olan kullanıcı +1 gün üyelik süresi kazanır**
+* Süreler otomatik olarak hesaba eklenir.
+* Sistem kötüye kullanıma karşı kontrol edilmektedir.
 
 ---
 
