@@ -1,5 +1,1 @@
-https://api2.paradisedev.org/
-https://api3.paradisedev.org/
-https://api4.paradisedev.org/
-https://api5.paradisedev.org/
-https://api6.paradisedev.org/
+api3
