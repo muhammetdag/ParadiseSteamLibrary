@@ -4,6 +4,7 @@
 Sadece bir kütüphane değil, performans, senkronizasyon ve gelişmiş mağaza altyapısı ile hepsi-bir-arada bir oyun yönetim çözümüdür.
 
 ---
+<img width="2548" height="1354" alt="image" src="https://github.com/user-attachments/assets/b7a2ac77-ad92-4f6f-98a8-a2fde0f4593d" />
 
 # 🚀 Steam Library Manager & Enhancer
 
