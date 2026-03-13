@@ -100,7 +100,7 @@ Yüksek performanslı ve güvenli altyapısı sayesinde kullanıcı deneyimini b
 
 ## 📥 İndirme
 Son sürümü indirmek için:  
-https://github.com/muhammetdag/ParadiseSteamLibrary/releases/tag/v3.3.0
+https://github.com/muhammetdag/ParadiseSteamLibrary/releases/tag/v3.3.1
 
 ---
 
