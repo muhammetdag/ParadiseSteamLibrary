@@ -4,7 +4,7 @@
 
 ### Denuvo destekli oyun deneyimi, yeniden başlatmasız kütüphane yönetimi ve Online Fix ile co-op oyun keyfi.
 
-<p>
+<p align="center">
   <img alt="Version" src="https://img.shields.io/badge/version-4.0.0-2f81f7?style=for-the-badge">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-1f6feb?style=for-the-badge">
   <img alt="Status" src="https://img.shields.io/badge/status-active-238636?style=for-the-badge">
@@ -14,6 +14,13 @@
 <br>
 
 <img width="100%" alt="Paradise Steam Library uygulama ekran görüntüsü" src="https://media.discordapp.net/attachments/1257354238015574098/1503786458216009952/content.png?ex=6a049dc6&is=6a034c46&hm=53dd4f143aed7446d3b5c6b027de2c388be9f9ce9aecb97fe1c14666cb167f05&=&format=webp&quality=lossless&width=1595&height=856">
+
+<br><br>
+
+<p align="center">
+  <a href="https://www.virustotal.com/gui/file/67704a86afff02b84b82c229758c5ac78d7c59613ca1c50d04ce7950671afb26?nocache=1"><img alt="VirusTotal MSI" src="https://img.shields.io/badge/VirusTotal-MSI-blue?style=for-the-badge&logo=virustotal" /></a>
+  <a href="https://www.virustotal.com/gui/file/37b7466fe22d9108ddc44de5d474a869a0cf4c31bd6b22a1b791701aad4008d0?nocache=1"><img alt="VirusTotal EXE" src="https://img.shields.io/badge/VirusTotal-EXE-blue?style=for-the-badge&logo=virustotal" /></a>
+</p>
 
 <br><br>
 
