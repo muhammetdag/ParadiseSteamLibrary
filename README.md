@@ -5,7 +5,7 @@
 ### Denuvo destekli oyun deneyimi, yeniden başlatmasız kütüphane yönetimi ve Online Fix ile co-op oyun keyfi.
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-4.0.0-2f81f7?style=for-the-badge">
+  <img alt="Version" src="https://img.shields.io/badge/version-4.1.0-2f81f7?style=for-the-badge">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-1f6feb?style=for-the-badge">
   <img alt="Status" src="https://img.shields.io/badge/status-active-238636?style=for-the-badge">
   <img alt="Source" src="https://img.shields.io/badge/source-closed-6e7681?style=for-the-badge">
