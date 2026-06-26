@@ -1,6 +1,6 @@
 <div align="center">
 
-# Paradise Steam Library
+# Paradise Library
 
 ### Denuvo destekli oyun deneyimi, yeniden başlatmasız kütüphane yönetimi ve Online Fix ile co-op oyun keyfi.
 
@@ -13,18 +13,18 @@
 
 <br>
 
-<img width="100%" alt="Paradise Steam Library uygulama ekran görüntüsü" src="https://media.discordapp.net/attachments/1257354238015574098/1503786458216009952/content.png?ex=6a049dc6&is=6a034c46&hm=53dd4f143aed7446d3b5c6b027de2c388be9f9ce9aecb97fe1c14666cb167f05&=&format=webp&quality=lossless&width=1595&height=856">
+<img width="100%" alt="Paradise Library uygulama ekran görüntüsü" src="https://media.discordapp.net/attachments/1257354238015574098/1503786458216009952/content.png?ex=6a049dc6&is=6a034c46&hm=53dd4f143aed7446d3b5c6b027de2c388be9f9ce9aecb97fe1c14666cb167f05&=&format=webp&quality=lossless&width=1595&height=856">
 
 <br><br>
 
 <p align="center">
-  <a href="https://www.virustotal.com/gui/file/67704a86afff02b84b82c229758c5ac78d7c59613ca1c50d04ce7950671afb26?nocache=1"><img alt="VirusTotal MSI" src="https://img.shields.io/badge/VirusTotal-MSI-blue?style=for-the-badge&logo=virustotal" /></a>
-  <a href="https://www.virustotal.com/gui/file/37b7466fe22d9108ddc44de5d474a869a0cf4c31bd6b22a1b791701aad4008d0?nocache=1"><img alt="VirusTotal EXE" src="https://img.shields.io/badge/VirusTotal-EXE-blue?style=for-the-badge&logo=virustotal" /></a>
+  <a href="https://www.virustotal.com/gui/file/11b19c91947956cc54799ce5a252707485b3e0ba116045b1aa88374e987d3fe8?nocache=1"><img alt="VirusTotal MSI" src="https://img.shields.io/badge/VirusTotal-MSI-blue?style=for-the-badge&logo=virustotal" /></a>
+  <a href="https://www.virustotal.com/gui/file/c92249188ddf044a00b9824e0854fac02416f5a10b0abaed5d76e067d7ee4196?nocache=1"><img alt="VirusTotal EXE" src="https://img.shields.io/badge/VirusTotal-EXE-blue?style=for-the-badge&logo=virustotal" /></a>
 </p>
 
 <br><br>
 
-**Paradise Steam Library**, Steam'i yeniden başlatmadan oyun ekleme/kaldırma, Denuvo korumalı oyunları oynayabilme ve Online Fix ile arkadaşlarınızla co-op/online oyun deneyimi sunan modern bir Steam platformudur.
+**Paradise Library**, Steam'i yeniden başlatmadan oyun ekleme/kaldırma, Denuvo korumalı oyunları oynayabilme ve Online Fix ile arkadaşlarınızla co-op/online oyun deneyimi sunan modern bir Steam platformudur.
 
 [İndir](https://github.com/muhammetdag/ParadiseSteamLibrary/releases) · [Discord](https://discord.gg/paradisedev) · [Hata Bildir](https://github.com/muhammetdag/ParadiseSteamLibrary/issues)
 
@@ -34,7 +34,7 @@
 
 ## Genel Bakış
 
-Paradise Steam Library, Steam kütüphanenizi yalnızca listeleyen bir araç değil; oyunları hızlıca ekleyip kaldırabildiğiniz, Denuvo destekli içeriklere erişebildiğiniz ve Online Fix ile arkadaşlarınızla online/co-op oyunlar oynayabildiğiniz gelişmiş bir oyun yönetim uygulamasıdır.
+Paradise Library, Steam kütüphanenizi yalnızca listeleyen bir araç değil; oyunları hızlıca ekleyip kaldırabildiğiniz, Denuvo destekli içeriklere erişebildiğiniz ve Online Fix ile arkadaşlarınızla online/co-op oyunlar oynayabildiğiniz gelişmiş bir oyun yönetim uygulamasıdır.
 
 Uygulama; hızlı kullanım, akıcı kütüphane yönetimi, gelişmiş oyun erişimi, zengin mağaza keşfi ve topluluk odaklı deneyim üzerine tasarlanmıştır.
 
@@ -42,7 +42,7 @@ Uygulama; hızlı kullanım, akıcı kütüphane yönetimi, gelişmiş oyun eri�
 
 ## Futüristik Özellikler
 
-Paradise Steam Library'nin en güçlü tarafı, klasik kütüphane yöneticilerinin ötesine geçen gelişmiş oyun deneyimi özellikleridir.
+Paradise Library'nin en güçlü tarafı, klasik kütüphane yöneticilerinin ötesine geçen gelişmiş oyun deneyimi özellikleridir.
 
 <table>
   <tr>
@@ -102,7 +102,7 @@ Paradise Steam Library'nin en güçlü tarafı, klasik kütüphane yöneticileri
 
 ## Mağaza
 
-Paradise Steam Library mağazası, oyun keşfetme ve kütüphaneye ekleme sürecini hızlı ve düzenli hale getirir.
+Paradise Library mağazası, oyun keşfetme ve kütüphaneye ekleme sürecini hızlı ve düzenli hale getirir.
 
 * Popüler yeni çıkan oyunları keşfetme
 * Çok satan oyunları görüntüleme
@@ -182,7 +182,7 @@ Profil sayfası, kullanıcı kimliğinizi, oyun aktivitelerinizi ve sosyal bağl
 
 ## Puan, Mini Oyunlar ve Davet Sistemi
 
-Paradise Steam Library, aktif kullanıcıları ödüllendiren puan ve üyelik sistemiyle daha canlı bir deneyim sunar.
+Paradise Library, aktif kullanıcıları ödüllendiren puan ve üyelik sistemiyle daha canlı bir deneyim sunar.
 
 * Mini oyunlar oynayarak puan kazanma
 * Mines ile puan katlama
@@ -219,7 +219,7 @@ Uygulama ayarları, hesabınızı ve kullanım deneyiminizi daha güvenli ve ki�
 4. Steam ve Discord bağlantılarınızı isteğe bağlı olarak tamamlayın.
 5. Kütüphane, mağaza, topluluk, istek listesi ve puan özelliklerini kullanmaya başlayın.
 
-> Paradise Steam Library kapalı kaynak bir uygulamadır. Güvenliğiniz için yalnızca resmi GitHub sayfası ve resmi topluluk kanalları üzerinden paylaşılan dosyaları kullanın.
+> Paradise Library kapalı kaynak bir uygulamadır. Güvenliğiniz için yalnızca resmi GitHub sayfası ve resmi topluluk kanalları üzerinden paylaşılan dosyaları kullanın.
 
 ---
 
@@ -254,6 +254,6 @@ Uygulama ayarları, hesabınızı ve kullanım deneyiminizi daha güvenli ve ki�
 
 <div align="center">
 
-**Paradise Steam Library'yi beğendiyseniz projeye yıldız vererek destek olabilirsiniz.**
+**Paradise Library'yi beğendiyseniz projeye yıldız vererek destek olabilirsiniz.**
 
 </div>
